@@ -26,11 +26,15 @@ namespace GameSerializer
 
 		FStructToJson(const FPersistentInstanceGraph* PersistentInstanceGraph);
 
-		void AddObject(const FString& FieldName, UObject* Object);
-
 		void AddObjects(const FString& FieldName, TArray<UObject*> Objects);
 
-		void AddStruct(const FString& FieldName, UScriptStruct* Struct, const void* Value);
+		void AddStruct(const FString& FieldName, UScriptStruct* Struct, const void* Value, const void* DefaultValue);
+		template<typename T>
+		void AddStruct(const FString& FieldName, UScriptStruct* Struct, const T& Value)
+		{
+			const T DefaultValue{};
+			AddStruct(FieldName, Struct, &Value, &DefaultValue);
+		}
 
 		const TSharedRef<FJsonObject>& GetResultJson() const { return RootJsonObject; }
 
@@ -40,6 +44,7 @@ namespace GameSerializer
 
 		TSharedRef<FJsonObject> RootJsonObject = MakeShared<FJsonObject>();
 		TSharedRef<FJsonObject> AssetJsonObject = MakeShared<FJsonObject>();
+		TSharedRef<FJsonObject> DynamicJsonObject = MakeShared<FJsonObject>();
 
 		struct FOuterData
 		{
@@ -62,7 +67,7 @@ namespace GameSerializer
 
 		void ObjectToJsonObject(const TSharedRef<FJsonObject>& JsonObject, UObject* Object);
 
-		TSharedPtr<FJsonValue> ConvertObjectToJson(FProperty* Property, const void* Value);
+		TSharedPtr<FJsonValue> ConvertObjectToJson(FProperty* Property, const void* Value, const void* Default, bool& bSameValue);
 	};
 
 	struct FJsonToStruct
@@ -74,13 +79,9 @@ namespace GameSerializer
 
 		FJsonToStruct(UObject* Outer, const TSharedRef<FJsonObject>& RootJsonObject, const FPersistentInstanceGraph* PersistentInstanceGraph);
 
-		TArray<UObject*> GetObjects(const FString FieldName) const;
-
-		UObject* JsonObjectToInstanceObject(const TSharedRef<FJsonObject>& JsonObject, FObjectIdx ObjectIdx);
-
-		void SyncAllInstanceJsonData();
-
+		TArray<UObject*> GetObjects(const FString& FieldName) const;
 	private:
+		UObject* JsonObjectToInstanceObject(const TSharedRef<FJsonObject>& JsonObject, FObjectIdx ObjectIdx);
 		UObject* GetObjectByIdx(FObjectIdx ObjectIdx) const;
 		
 		UObject* Outer;

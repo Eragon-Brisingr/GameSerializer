@@ -25,16 +25,16 @@ struct FTestSerializeData
 	GENERATED_BODY()
 public:
 	UPROPERTY(SaveGame)
-	int32 Value0 = 0;
+	int32 Value0 = 3;
 	
 	UPROPERTY(SaveGame)
-	int32 Value1 = 0;
+	float Value1 = 5.f;
 
 	UPROPERTY(SaveGame)
 	UObject* Value2 = nullptr;
 
 	UPROPERTY(SaveGame)
-	TArray<int32> ArrayValue1;
+	TArray<int32> ArrayValue1 = { 1, 2 };
 };
 
 UCLASS()
@@ -73,6 +73,9 @@ class URootObject : public UObject
 public:
 	UPROPERTY(SaveGame)
 	TArray<UParentObject*> ParentObjects;
+
+	UPROPERTY(SaveGame)
+	FTestSerializeData TestSerializeData;
 };
 
 /**

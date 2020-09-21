@@ -10,16 +10,18 @@
 
 namespace CustomJsonConverter
 {
-	DECLARE_DELEGATE_RetVal_TwoParams(TSharedPtr<FJsonValue>, FCustomExportCallback, FProperty* /* Property */, const void* /* Value */);
+	DECLARE_DELEGATE_RetVal_FourParams(TSharedPtr<FJsonValue>, FCustomExportCallback, FProperty* /* Property */, const void* /* Value */, const void* /*Default*/, bool& /*bSameValue*/);
 
 	struct StructToJson
 	{
-		static TSharedPtr<FJsonValue> ConvertScalarFPropertyToJsonValue(FProperty* Property, const void* Value, int64 CheckFlags, int64 SkipFlags, const FCustomExportCallback& ExportCb)
+		static TSharedPtr<FJsonValue> ConvertScalarFPropertyToJsonValue(FProperty* Property, const void* Value, const void* DefaultValue, bool& bSameValue, int64 CheckFlags, int64 SkipFlags, const FCustomExportCallback& ExportCb)
 		{
+			bSameValue = false;
+			
 			// See if there's a custom export callback first, so it can override default behavior
 			if (ExportCb.IsBound())
 			{
-				TSharedPtr<FJsonValue> CustomValue = ExportCb.Execute(Property, Value);
+				TSharedPtr<FJsonValue> CustomValue = ExportCb.Execute(Property, Value, DefaultValue, bSameValue);
 				if (CustomValue.IsValid())
 				{
 					return CustomValue;
@@ -31,27 +33,51 @@ namespace CustomJsonConverter
 			{
 				// export enums as strings
 				UEnum* EnumDef = EnumProperty->GetEnum();
-				FString StringValue = EnumDef->GetNameStringByValue(EnumProperty->GetUnderlyingProperty()->GetSignedIntPropertyValue(Value));
+				const int64 EnumValue = EnumProperty->GetUnderlyingProperty()->GetSignedIntPropertyValue(Value);
+				FString StringValue = EnumDef->GetNameStringByValue(EnumValue);
+				if (DefaultValue)
+				{
+					const int64 DefaultEnumValue = EnumProperty->GetUnderlyingProperty()->GetSignedIntPropertyValue(DefaultValue);
+					bSameValue = EnumValue == DefaultEnumValue;
+				}
 				return MakeShared<FJsonValueString>(StringValue);
 			}
 			else if (FNumericProperty* NumericProperty = CastField<FNumericProperty>(Property))
 			{
 				// see if it's an enum
 				UEnum* EnumDef = NumericProperty->GetIntPropertyEnum();
-				if (EnumDef != NULL)
+				if (EnumDef != nullptr)
 				{
 					// export enums as strings
-					FString StringValue = EnumDef->GetNameStringByValue(NumericProperty->GetSignedIntPropertyValue(Value));
+					const int64 EnumValue = NumericProperty->GetSignedIntPropertyValue(Value);
+					const FString StringValue = EnumDef->GetNameStringByValue(EnumValue);
+					if (DefaultValue)
+					{
+						const int64 DefaultEnumValue = NumericProperty->GetSignedIntPropertyValue(DefaultValue);
+						bSameValue = EnumValue == DefaultEnumValue;
+					}
 					return MakeShared<FJsonValueString>(StringValue);
 				}
 
 				// We want to export numbers as numbers
 				if (NumericProperty->IsFloatingPoint())
 				{
-					return MakeShared<FJsonValueNumber>(NumericProperty->GetFloatingPointPropertyValue(Value));
+					const float Number = NumericProperty->GetFloatingPointPropertyValue(Value);
+					if (DefaultValue)
+					{
+						const float DefaultNumber = NumericProperty->GetFloatingPointPropertyValue(DefaultValue);
+						bSameValue = Number == DefaultNumber;
+					}
+					return MakeShared<FJsonValueNumber>(Number);
 				}
 				else if (NumericProperty->IsInteger())
 				{
+					const int64 Number = NumericProperty->GetSignedIntPropertyValue(Value);
+					if (DefaultValue)
+					{
+						const int64 DefaultNumber = NumericProperty->GetSignedIntPropertyValue(DefaultValue);
+						bSameValue = Number == DefaultNumber;
+					}
 					return MakeShared<FJsonValueNumber>(NumericProperty->GetSignedIntPropertyValue(Value));
 				}
 
@@ -60,23 +86,50 @@ namespace CustomJsonConverter
 			else if (FBoolProperty* BoolProperty = CastField<FBoolProperty>(Property))
 			{
 				// Export bools as bools
-				return MakeShared<FJsonValueBoolean>(BoolProperty->GetPropertyValue(Value));
+				const bool BoolValue = BoolProperty->GetPropertyValue(Value);
+				if (DefaultValue)
+				{
+					const bool DefaultBoolValue = BoolProperty->GetPropertyValue(DefaultValue);
+					bSameValue = BoolValue == DefaultBoolValue;
+				}
+				return MakeShared<FJsonValueBoolean>(BoolValue);
 			}
 			else if (FStrProperty* StringProperty = CastField<FStrProperty>(Property))
 			{
-				return MakeShared<FJsonValueString>(StringProperty->GetPropertyValue(Value));
+				const FString StringValue = StringProperty->GetPropertyValue(Value);
+				if (DefaultValue)
+				{
+					const FString DefaultStringValue = StringProperty->GetPropertyValue(DefaultValue);
+					bSameValue = StringValue == DefaultStringValue;
+				}
+				return MakeShared<FJsonValueString>(StringValue);
 			}
 			else if (FTextProperty* TextProperty = CastField<FTextProperty>(Property))
 			{
+				const FText TextValue = TextProperty->GetPropertyValue(Value);
+				if (DefaultValue)
+				{
+					const FText DefaultTextValue = TextProperty->GetPropertyValue(DefaultValue);
+					bSameValue = TextValue.CompareTo(DefaultTextValue) == 0;
+				}
 				return MakeShared<FJsonValueString>(TextProperty->GetPropertyValue(Value).ToString());
 			}
 			else if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
 			{
 				TArray< TSharedPtr<FJsonValue> > Out;
 				FScriptArrayHelper Helper(ArrayProperty, Value);
+				TOptional<FScriptArrayHelper> DefaultValueHelper;
+				if (DefaultValue)
+				{
+					DefaultValueHelper = FScriptArrayHelper(ArrayProperty, DefaultValue);
+					bSameValue = Helper.Num() == DefaultValueHelper->Num();
+				}
 				for (int32 i = 0, n = Helper.Num(); i < n; ++i)
 				{
-					TSharedPtr<FJsonValue> Elem = UPropertyToJsonValue(ArrayProperty->Inner, Helper.GetRawPtr(i), CheckFlags & (~CPF_ParmFlags), SkipFlags, ExportCb);
+					const bool IsValidDefaultValueIdx = DefaultValue ? DefaultValueHelper->IsValidIndex(i) : false;
+					bool bElementSameValue;
+					TSharedPtr<FJsonValue> Elem = UPropertyToJsonValue(ArrayProperty->Inner, Helper.GetRawPtr(i), IsValidDefaultValueIdx ? DefaultValueHelper->GetRawPtr(i) : nullptr, bElementSameValue, CheckFlags & (~CPF_ParmFlags), SkipFlags, ExportCb);
+					bSameValue &= bElementSameValue;
 					if (Elem.IsValid())
 					{
 						// add to the array
@@ -89,11 +142,21 @@ namespace CustomJsonConverter
 			{
 				TArray< TSharedPtr<FJsonValue> > Out;
 				FScriptSetHelper Helper(SetProperty, Value);
+				
+				TOptional<FScriptSetHelper> DefaultValueHelper;
+				if (DefaultValue)
+				{
+					DefaultValueHelper = FScriptSetHelper(SetProperty, DefaultValue);
+					bSameValue = Helper.Num() == DefaultValueHelper->Num();
+				}
 				for (int32 i = 0, n = Helper.Num(); n; ++i)
 				{
 					if (Helper.IsValidIndex(i))
 					{
-						TSharedPtr<FJsonValue> Elem = UPropertyToJsonValue(SetProperty->ElementProp, Helper.GetElementPtr(i), CheckFlags & (~CPF_ParmFlags), SkipFlags, ExportCb);
+						const bool IsValidDefaultValueIdx = DefaultValue ? DefaultValueHelper->IsValidIndex(i) : false;
+						bool bElementSameValue;
+						TSharedPtr<FJsonValue> Elem = UPropertyToJsonValue(SetProperty->ElementProp, Helper.GetElementPtr(i), IsValidDefaultValueIdx ? DefaultValueHelper->GetElementPtr(i) : nullptr, bElementSameValue, CheckFlags & (~CPF_ParmFlags), SkipFlags, ExportCb);
+						bSameValue &= bElementSameValue;
 						if (Elem.IsValid())
 						{
 							// add to the array
@@ -110,12 +173,23 @@ namespace CustomJsonConverter
 				TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
 
 				FScriptMapHelper Helper(MapProperty, Value);
+
+				TOptional<FScriptMapHelper> DefaultValueHelper;
+				if (DefaultValue)
+				{
+					DefaultValueHelper = FScriptMapHelper(MapProperty, DefaultValue);
+					bSameValue = Helper.Num() == DefaultValueHelper->Num();
+				}
 				for (int32 i = 0, n = Helper.Num(); n; ++i)
 				{
 					if (Helper.IsValidIndex(i))
 					{
-						TSharedPtr<FJsonValue> KeyElement = UPropertyToJsonValue(MapProperty->KeyProp, Helper.GetKeyPtr(i), CheckFlags & (~CPF_ParmFlags), SkipFlags, ExportCb);
-						TSharedPtr<FJsonValue> ValueElement = UPropertyToJsonValue(MapProperty->ValueProp, Helper.GetValuePtr(i), CheckFlags & (~CPF_ParmFlags), SkipFlags, ExportCb);
+						const bool IsValidDefaultValueIdx = DefaultValue ? DefaultValueHelper->IsValidIndex(i) : false;
+						bool bKeySameValue;
+						TSharedPtr<FJsonValue> KeyElement = UPropertyToJsonValue(MapProperty->KeyProp, Helper.GetKeyPtr(i), IsValidDefaultValueIdx ? DefaultValueHelper->GetKeyPtr(i) : nullptr, bKeySameValue, CheckFlags & (~CPF_ParmFlags), SkipFlags, ExportCb);
+						bool bValueSameValue;
+						TSharedPtr<FJsonValue> ValueElement = UPropertyToJsonValue(MapProperty->ValueProp, Helper.GetValuePtr(i), IsValidDefaultValueIdx ? DefaultValueHelper->GetValuePtr(i) : nullptr, bValueSameValue, CheckFlags & (~CPF_ParmFlags), SkipFlags, ExportCb);
+						bSameValue &= bKeySameValue && bValueSameValue;
 						if (KeyElement.IsValid() && ValueElement.IsValid())
 						{
 							FString KeyString;
@@ -150,7 +224,7 @@ namespace CustomJsonConverter
 				}
 
 				TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
-				if (UStructToJsonAttributes(StructProperty->Struct, Value, Out->Values, CheckFlags & (~CPF_ParmFlags), SkipFlags, ExportCb))
+				if (UStructToJsonAttributes(StructProperty->Struct, Value, DefaultValue, bSameValue, Out->Values, CheckFlags & (~CPF_ParmFlags), SkipFlags, ExportCb))
 				{
 					return MakeShared<FJsonValueObject>(Out);
 				}
@@ -160,7 +234,7 @@ namespace CustomJsonConverter
 			{
 				// Default to export as string for everything else
 				FString StringValue;
-				Property->ExportTextItem(StringValue, Value, NULL, NULL, PPF_None);
+				Property->ExportTextItem(StringValue, Value, nullptr, nullptr, PPF_None);
 				return MakeShared<FJsonValueString>(StringValue);
 			}
 
@@ -168,17 +242,20 @@ namespace CustomJsonConverter
 			return TSharedPtr<FJsonValue>();
 		}
 
-		static TSharedPtr<FJsonValue> UPropertyToJsonValue(FProperty* Property, const void* Value, int64 CheckFlags, int64 SkipFlags, const FCustomExportCallback& ExportCb)
+		static TSharedPtr<FJsonValue> UPropertyToJsonValue(FProperty* Property, const void* Value, const void* DefaultValue, bool& bSameValue, int64 CheckFlags, int64 SkipFlags, const FCustomExportCallback& ExportCb)
 		{
 			if (Property->ArrayDim == 1)
 			{
-				return ConvertScalarFPropertyToJsonValue(Property, Value, CheckFlags, SkipFlags, ExportCb);
+				return ConvertScalarFPropertyToJsonValue(Property, Value, DefaultValue, bSameValue, CheckFlags, SkipFlags, ExportCb);
 			}
 
 			TArray< TSharedPtr<FJsonValue> > Array;
 			for (int Index = 0; Index != Property->ArrayDim; ++Index)
 			{
-				Array.Add(ConvertScalarFPropertyToJsonValue(Property, (char*)Value + Index * Property->ElementSize, CheckFlags, SkipFlags, ExportCb));
+				const int32 Offset = Index * Property->ElementSize;
+				bool bElementSameValue;
+				Array.Add(ConvertScalarFPropertyToJsonValue(Property, (char*)Value + Offset, (char*)DefaultValue + Offset, bElementSameValue, CheckFlags, SkipFlags, ExportCb));
+				bSameValue &= bElementSameValue;
 			}
 			return MakeShared<FJsonValueArray>(Array);
 		}
@@ -192,7 +269,7 @@ namespace CustomJsonConverter
 			return FixedString;
 		}
 
-		static bool UStructToJsonAttributes(const UStruct* StructDefinition, const void* Struct, TMap< FString, TSharedPtr<FJsonValue> >& OutJsonAttributes, int64 CheckFlags, int64 SkipFlags, const FCustomExportCallback& ExportCb)
+		static bool UStructToJsonAttributes(const UStruct* StructDefinition, const void* Struct, const void* DefaultStruct, bool& bSameValue, TMap< FString, TSharedPtr<FJsonValue> >& OutJsonAttributes, int64 CheckFlags, int64 SkipFlags, const FCustomExportCallback& ExportCb)
 		{
 			if (SkipFlags == 0)
 			{
@@ -228,9 +305,12 @@ namespace CustomJsonConverter
 
 				FString VariableName = StandardizeCase(Property->GetName());
 				const void* Value = Property->ContainerPtrToValuePtr<uint8>(Struct);
+				const void* DefaultValue = DefaultStruct ? Property->ContainerPtrToValuePtr<uint8>(DefaultStruct) : nullptr;
 
+				bool bPropertySameValue;
 				// convert the property to a FJsonValue
-				TSharedPtr<FJsonValue> JsonValue = UPropertyToJsonValue(Property, Value, CheckFlags, SkipFlags, ExportCb);
+				TSharedPtr<FJsonValue> JsonValue = UPropertyToJsonValue(Property, Value, DefaultValue, bPropertySameValue, CheckFlags, SkipFlags, ExportCb);
+				bSameValue &= bPropertySameValue;
 				if (!JsonValue.IsValid())
 				{
 					FFieldClass* PropClass = Property->GetClass();
@@ -238,8 +318,11 @@ namespace CustomJsonConverter
 					return false;
 				}
 
-				// set the value on the output object
-				OutJsonAttributes.Add(VariableName, JsonValue);
+				if (bPropertySameValue == false)
+				{
+					// set the value on the output object
+					OutJsonAttributes.Add(VariableName, JsonValue);
+				}
 			}
 
 			return true;
@@ -778,22 +861,11 @@ namespace GameSerializer
 		: PersistentInstanceGraph(PersistentInstanceGraph)
 	{
 		RootJsonObject->SetObjectField(AssetObjectsFieldName, AssetJsonObject);
+		RootJsonObject->SetObjectField(DynamicObjectsFieldName, DynamicJsonObject);
 	}
 
 	void FStructToJson::AddObjects(const FString& FieldName, TArray<UObject*> Objects)
 	{
-		const TSharedRef<FJsonObject> DynamicObjectsJson = [&]
-		{
-			const TSharedPtr<FJsonObject>* ObjectsJsonPtr;
-			if (RootJsonObject->TryGetObjectField(DynamicObjectsFieldName, ObjectsJsonPtr))
-			{
-				return ObjectsJsonPtr->ToSharedRef();
-			}
-			const TSharedRef<FJsonObject> JsonObject = MakeShared<FJsonObject>();
-			RootJsonObject->SetObjectField(DynamicObjectsFieldName, JsonObject);
-			return JsonObject;
-		}();
-
 		TArray<TSharedPtr<FJsonValue>> ObjectsJsonArray;
 		for (UObject* Object : Objects)
 		{
@@ -812,16 +884,17 @@ namespace GameSerializer
 				
 				const TSharedRef<FJsonObject> JsonObject = MakeShared<FJsonObject>();
 				ObjectToJsonObject(JsonObject, Object);
-				DynamicObjectsJson->SetObjectField(FString::FromInt(NewObjectIdx), JsonObject);
+				DynamicJsonObject->SetObjectField(FString::FromInt(NewObjectIdx), JsonObject);
 			}
 		}
 		RootJsonObject->SetArrayField(FieldName, ObjectsJsonArray);
 	}
 
-	void FStructToJson::AddStruct(const FString& FieldName, UScriptStruct* Struct, const void* Value)
+	void FStructToJson::AddStruct(const FString& FieldName, UScriptStruct* Struct, const void* Value, const void* DefaultValue)
 	{
 		const TSharedRef<FJsonObject> JsonObject = MakeShared<FJsonObject>();
-		ensure(StructToJson::UStructToJsonAttributes(Struct, Value, JsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
+		bool bSameValue;
+		ensure(StructToJson::UStructToJsonAttributes(Struct, Value, DefaultValue, bSameValue, JsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
 		RootJsonObject->SetObjectField(FieldName, JsonObject);
 	}
 
@@ -855,15 +928,23 @@ namespace GameSerializer
 		JsonObject->SetNumberField(ObjectClassFieldName, GetAssetIndex(Class));
 
 		OuterChain.Add(FOuterData(Object, JsonObject));
-		ensure(StructToJson::UStructToJsonAttributes(Class, Object, JsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
+		bool bSameValue;
+		ensure(StructToJson::UStructToJsonAttributes(Class, Object, Class->GetDefaultObject(), bSameValue, JsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
 		OuterChain.Pop();
 	}
 
-	TSharedPtr<FJsonValue> FStructToJson::ConvertObjectToJson(FProperty* Property, const void* Value)
+	TSharedPtr<FJsonValue> FStructToJson::ConvertObjectToJson(FProperty* Property, const void* Value, const void* Default, bool& bSameValue)
 	{
 		if (FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property))
 		{
 			UObject* SubObject = ObjectProperty->GetPropertyValue(Value);
+
+			if (Default)
+			{
+				UObject* DefaultSubObject = ObjectProperty->GetPropertyValue(Default);
+				bSameValue = SubObject == DefaultSubObject;
+			}
+			
 			if (SubObject != nullptr)
 			{
 				// 存在于包内的数据记录路径即可
@@ -910,7 +991,8 @@ namespace GameSerializer
 
 									const FObjectIdx StructIdx = GetAssetIndex(ExtendDataContainer.Struct);
 									ExtendDataContainerJsonObject->SetNumberField(ExtendDataTypeFieldName, StructIdx);
-									ensure(StructToJson::UStructToJsonAttributes(ExtendDataContainer.Struct, ExtendDataContainer.Data.GetData(), ExtendDataContainerJsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
+									bool bSubObjectSameValue;
+									ensure(StructToJson::UStructToJsonAttributes(ExtendDataContainer.Struct, ExtendDataContainer.Data.GetData(), nullptr, bSubObjectSameValue, ExtendDataContainerJsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
 								}
 							}
 							ObjectToJsonObject(SubObjectJsonObject, SubObject);
@@ -944,30 +1026,86 @@ namespace GameSerializer
 	    , RootJsonObject(RootJsonObject)
 		, PersistentInstanceGraph(PersistentInstanceGraph)
 	{
-		const TSharedPtr<FJsonObject> AssetJsonObject = RootJsonObject->GetObjectField(AssetObjectsFieldName);
-		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : AssetJsonObject->Values)
+		// 加载资源
 		{
-			const FObjectIdx Idx = -FCString::Atoi(*Pair.Key);
-			AssetsArray.SetNumUninitialized(Idx + 1);
+			const TSharedPtr<FJsonObject> AssetJsonObject = RootJsonObject->GetObjectField(AssetObjectsFieldName);
+			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : AssetJsonObject->Values)
+			{
+				const FObjectIdx Idx = -FCString::Atoi(*Pair.Key);
+				AssetsArray.SetNumUninitialized(Idx + 1);
 
-			const FString SoftObjectPathString = Pair.Value->AsString();
-			const TCHAR* Buffer = *SoftObjectPathString;
+				const FString SoftObjectPathString = Pair.Value->AsString();
+				const TCHAR* Buffer = *SoftObjectPathString;
 
-			FSoftObjectPath SoftObjectPath;
-			SoftObjectPath.ImportTextItem(Buffer, PPF_None, nullptr, nullptr);
+				FSoftObjectPath SoftObjectPath;
+				SoftObjectPath.ImportTextItem(Buffer, PPF_None, nullptr, nullptr);
 
-			AssetsArray[Idx] = SoftObjectPath.TryLoad();
+				AssetsArray[Idx] = SoftObjectPath.TryLoad();
+			}
 		}
 
-		const TSharedPtr<FJsonObject> DynamicJsonObject = RootJsonObject->GetObjectField(DynamicObjectsFieldName);
-		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : DynamicJsonObject->Values)
+		// 实例化Object
 		{
-			const FObjectIdx Idx = FCString::Atoi(*Pair.Key);
-			JsonObjectToInstanceObject(Pair.Value->AsObject().ToSharedRef(), Idx);
+			const TSharedPtr<FJsonObject> DynamicJsonObject = RootJsonObject->GetObjectField(DynamicObjectsFieldName);
+			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : DynamicJsonObject->Values)
+			{
+				const FObjectIdx Idx = FCString::Atoi(*Pair.Key);
+				JsonObjectToInstanceObject(Pair.Value->AsObject().ToSharedRef(), Idx);
+			}
+		}
+
+		// 读取实例化的Object数据
+		{
+			const FCustomImportCallback JsonObjectIdxToObject = FCustomImportCallback::CreateLambda([this](const TSharedPtr<FJsonValue>& JsonValue, FProperty* Property, void* OutValue)
+			{
+				if (FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property))
+				{
+					const FObjectIdx ObjectIdx = static_cast<int>(JsonValue->AsNumber());
+					ObjectProperty->SetObjectPropertyValue(OutValue, GetObjectByIdx(ObjectIdx));
+					return true;
+				}
+				return false;
+			});
+
+			for (const FInstancedObjectData& InstancedObjectData : InstancedObjectDatas)
+			{
+				UClass* Class = InstancedObjectData.Object->GetClass();
+				UObject* LoadedObject = InstancedObjectData.Object;
+
+				ensure(JsonToStruct::JsonAttributesToUStructWithContainer(InstancedObjectData.JsonObject->Values, Class, LoadedObject, Class, LoadedObject, CheckFlags, SkipFlags, JsonObjectIdxToObject));
+			}
+
+			for (const FInstancedObjectData& InstancedObjectData : InstancedObjectDatas)
+			{
+				UObject* LoadedObject = InstancedObjectData.Object;
+				if (LoadedObject->Implements<UGameSerializerInterface>())
+				{
+					const TSharedPtr<FJsonObject>* ExtendDataJsonObject;
+					if (InstancedObjectData.JsonObject->TryGetObjectField(ExtendDataFieldName, ExtendDataJsonObject))
+					{
+						UScriptStruct* Struct = CastChecked<UScriptStruct>(AssetsArray[-int32(ExtendDataJsonObject->Get()->GetNumberField(ExtendDataTypeFieldName))]);
+						TArray<uint8> ExtendDataMemory;
+						ExtendDataMemory.SetNumZeroed(Struct->GetStructureSize());
+						ensure(JsonToStruct::JsonAttributesToUStructWithContainer(ExtendDataJsonObject->Get()->Values, Struct, ExtendDataMemory.GetData(), Struct, ExtendDataMemory.GetData(), CheckFlags, SkipFlags, JsonObjectIdxToObject));
+
+						IGameSerializerInterface::WhenGamePostLoad(LoadedObject, reinterpret_cast<const FGameSerializerExtendData&>(*ExtendDataMemory.GetData()));
+					}
+					else
+					{
+						IGameSerializerInterface::WhenGamePostLoad(LoadedObject, FGameSerializerExtendData());
+					}
+				}
+			}
+
+			for (AActor* SpawnedActor : SpawnedActors)
+			{
+				check(SpawnedActor);
+				SpawnedActor->FinishSpawning(SpawnedActor->GetActorTransform());
+			}
 		}
 	}
 
-	TArray<UObject*> FJsonToStruct::GetObjects(const FString FieldName) const
+	TArray<UObject*> FJsonToStruct::GetObjects(const FString& FieldName) const
 	{
 		TArray<UObject*> Res;
 
@@ -1047,56 +1185,6 @@ namespace GameSerializer
 		}
 
 		return Object;
-	}
-
-	void FJsonToStruct::SyncAllInstanceJsonData()
-	{
-		const FCustomImportCallback JsonObjectIdxToObject = FCustomImportCallback::CreateLambda([this](const TSharedPtr<FJsonValue>& JsonValue, FProperty* Property, void* OutValue)
-		{
-			if (FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property))
-			{
-				const FObjectIdx ObjectIdx = static_cast<int>(JsonValue->AsNumber());
-				ObjectProperty->SetObjectPropertyValue(OutValue, GetObjectByIdx(ObjectIdx));
-				return true;
-			}
-			return false;
-		});
-		
-		for (const FInstancedObjectData& InstancedObjectData : InstancedObjectDatas)
-		{
-			UClass* Class = InstancedObjectData.Object->GetClass();
-			UObject* LoadedObject = InstancedObjectData.Object;
-			
-			ensure(JsonToStruct::JsonAttributesToUStructWithContainer(InstancedObjectData.JsonObject->Values, Class, LoadedObject, Class, LoadedObject, CheckFlags, SkipFlags, JsonObjectIdxToObject));
-		}
-
-		for (const FInstancedObjectData& InstancedObjectData : InstancedObjectDatas)
-		{
-			UObject* LoadedObject = InstancedObjectData.Object;
-			if (LoadedObject->Implements<UGameSerializerInterface>())
-			{
-				const TSharedPtr<FJsonObject>* ExtendDataJsonObject;
-				if (InstancedObjectData.JsonObject->TryGetObjectField(ExtendDataFieldName, ExtendDataJsonObject))
-				{
-					UScriptStruct* Struct = CastChecked<UScriptStruct>(AssetsArray[-int32(ExtendDataJsonObject->Get()->GetNumberField(ExtendDataTypeFieldName))]);
-					TArray<uint8> ExtendDataMemory;
-					ExtendDataMemory.SetNumZeroed(Struct->GetStructureSize());
-					ensure(JsonToStruct::JsonAttributesToUStructWithContainer(ExtendDataJsonObject->Get()->Values, Struct, ExtendDataMemory.GetData(), Struct, ExtendDataMemory.GetData(), CheckFlags, SkipFlags, JsonObjectIdxToObject));
-
-					IGameSerializerInterface::WhenGamePostLoad(LoadedObject, reinterpret_cast<const FGameSerializerExtendData&>(*ExtendDataMemory.GetData()));
-				}
-				else
-				{
-					IGameSerializerInterface::WhenGamePostLoad(LoadedObject, FGameSerializerExtendData());
-				}
-			}
-		}
-		
-		for (AActor* SpawnedActor : SpawnedActors)
-		{
-			check(SpawnedActor);
-			SpawnedActor->FinishSpawning(SpawnedActor->GetActorTransform());
-		}
 	}
 
 	UObject* FJsonToStruct::GetObjectByIdx(FObjectIdx ObjectIdx) const

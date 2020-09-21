@@ -22,8 +22,8 @@ FGameSerializerExtendDataContainer UParentObject::WhenGamePreSave_Implementation
 void UGameSerializerUnitTest::ExecuteTest()
 {
 	FTestSerializeData SerializeData1;
-	SerializeData1.Value1 = 3;
-	SerializeData1.ArrayValue1.Append({ 3, 2, 1 });
+	SerializeData1.Value0 = 3;
+	SerializeData1.ArrayValue1 = { 3, 2, 1 };
 
 	URootObject* RootObject = NewObject<URootObject>(NewObject<URootObject>());
 	{
@@ -35,7 +35,7 @@ void UGameSerializerUnitTest::ExecuteTest()
 
 	GameSerializer::FStructToJson GameSerializer(nullptr);
 	GameSerializer.AddObjects(TEXT("ObjectList"), { RootObject, RootObject, nullptr });
-	GameSerializer.AddStruct(TEXT("FTestSerializeData"), FTestSerializeData::StaticStruct(), &SerializeData1);
+	GameSerializer.AddStruct(TEXT("FTestSerializeData"), FTestSerializeData::StaticStruct(), SerializeData1);
 
 	const TSharedRef<FJsonObject> JsonObject = GameSerializer.GetResultJson();
 
@@ -48,8 +48,6 @@ void UGameSerializerUnitTest::ExecuteTest()
 
 	GameSerializer::FJsonToStruct JsonToStruct(GetTransientPackage(), JsonObject, nullptr);
 	TArray<UObject*> LoadedObjects = JsonToStruct.GetObjects(TEXT("ObjectList"));
-
-	JsonToStruct.SyncAllInstanceJsonData();
 
 	ensure(false);
 }
@@ -69,7 +67,6 @@ TArray<AActor*> UGameSerializerUnitTest::JsonToActors(UObject* WorldContextObjec
 	GameSerializer::FJsonToStruct JsonToStruct(Level, GameSerializer::StringToJsonObject(JsonString).ToSharedRef(), nullptr);
 	JsonToStruct.CheckFlags = CPF_SaveGame;
 	const TArray<UObject*> NewActors = JsonToStruct.GetObjects(ActorsFieldName);
-	JsonToStruct.SyncAllInstanceJsonData();
 
 	return reinterpret_cast<const TArray<AActor*>&>(NewActors);
 }
