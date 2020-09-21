@@ -984,15 +984,16 @@ namespace GameSerializer
 							if (SubObject->Implements<UGameSerializerInterface>())
 							{
 								const FGameSerializerExtendDataContainer ExtendDataContainer = IGameSerializerInterface::WhenGamePreSave(SubObject);
-								if (ExtendDataContainer.Struct)
+								if (ExtendDataContainer.Struct && ensure(ExtendDataContainer.ExtendData.IsValid()))
 								{
 									const TSharedRef<FJsonObject> ExtendDataContainerJsonObject = MakeShared<FJsonObject>();
 									SubObjectJsonObject->SetObjectField(ExtendDataFieldName, ExtendDataContainerJsonObject);
 
 									const FObjectIdx StructIdx = GetAssetIndex(ExtendDataContainer.Struct);
 									ExtendDataContainerJsonObject->SetNumberField(ExtendDataTypeFieldName, StructIdx);
+									// TODO：剔除默认值
 									bool bSubObjectSameValue;
-									ensure(StructToJson::UStructToJsonAttributes(ExtendDataContainer.Struct, ExtendDataContainer.Data.GetData(), nullptr, bSubObjectSameValue, ExtendDataContainerJsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
+									ensure(StructToJson::UStructToJsonAttributes(ExtendDataContainer.Struct, ExtendDataContainer.ExtendData.Get(), nullptr, bSubObjectSameValue, ExtendDataContainerJsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
 								}
 							}
 							ObjectToJsonObject(SubObjectJsonObject, SubObject);
@@ -1084,15 +1085,17 @@ namespace GameSerializer
 					if (InstancedObjectData.JsonObject->TryGetObjectField(ExtendDataFieldName, ExtendDataJsonObject))
 					{
 						UScriptStruct* Struct = CastChecked<UScriptStruct>(AssetsArray[-int32(ExtendDataJsonObject->Get()->GetNumberField(ExtendDataTypeFieldName))]);
-						TArray<uint8> ExtendDataMemory;
-						ExtendDataMemory.SetNumZeroed(Struct->GetStructureSize());
-						ensure(JsonToStruct::JsonAttributesToUStructWithContainer(ExtendDataJsonObject->Get()->Values, Struct, ExtendDataMemory.GetData(), Struct, ExtendDataMemory.GetData(), CheckFlags, SkipFlags, JsonObjectIdxToObject));
-
-						IGameSerializerInterface::WhenGamePostLoad(LoadedObject, reinterpret_cast<const FGameSerializerExtendData&>(*ExtendDataMemory.GetData()));
+						FGameSerializerExtendData* ExtendData = static_cast<FGameSerializerExtendData*>(FMemory::Malloc(Struct->GetStructureSize()));
+						Struct->InitializeStruct(ExtendData);
+						ensure(JsonToStruct::JsonAttributesToUStructWithContainer(ExtendDataJsonObject->Get()->Values, Struct, ExtendData, Struct, ExtendData, CheckFlags, SkipFlags, JsonObjectIdxToObject));
+						FGameSerializerExtendDataContainer DataContainer;
+						DataContainer.Struct = Struct;
+						DataContainer.ExtendData = MakeShareable(ExtendData);
+						IGameSerializerInterface::WhenGamePostLoad(LoadedObject, DataContainer);
 					}
 					else
 					{
-						IGameSerializerInterface::WhenGamePostLoad(LoadedObject, FGameSerializerExtendData());
+						IGameSerializerInterface::WhenGamePostLoad(LoadedObject, FGameSerializerExtendDataContainer());
 					}
 				}
 			}

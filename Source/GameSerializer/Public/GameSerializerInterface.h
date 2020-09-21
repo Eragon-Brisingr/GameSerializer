@@ -24,16 +24,14 @@ public:
 	UPROPERTY()
 	const UScriptStruct* Struct = nullptr;
 
-	TArray<uint8> Data;
-
+	TSharedPtr<FGameSerializerExtendData> ExtendData;
+	
 	template<typename T>
 	static FGameSerializerExtendDataContainer Make(const T& ExtendData)
 	{
 		FGameSerializerExtendDataContainer Container;
 		Container.Struct = T::StaticStruct();
-		const int32 StructureSize = Container.Struct->GetStructureSize();
-		Container.Data.SetNumZeroed(StructureSize);
-		reinterpret_cast<T&>(*Container.Data.GetData()) = ExtendData;
+		Container.ExtendData = MakeShared<T>(ExtendData);
 		return Container;
 	}
 };
@@ -54,12 +52,12 @@ class GAMESERIALIZER_API IGameSerializerInterface
 
 	// Add interface functions to this class. This is the class that will be inherited to implement this interface.
 public:
-	UFUNCTION(BlueprintNativeEvent, Category = "游戏|读档")
-	void WhenGamePostLoad(const FGameSerializerExtendData& ExtendData);
-	virtual void WhenGamePostLoad_Implementation(const FGameSerializerExtendData& ExtendData) {}
-	static void WhenGamePostLoad(UObject* Obj, const FGameSerializerExtendData& ExtendData) { Execute_WhenGamePostLoad(Obj, ExtendData); }
+	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
+	void WhenGamePostLoad(const FGameSerializerExtendDataContainer& ExtendData);
+	virtual void WhenGamePostLoad_Implementation(const FGameSerializerExtendDataContainer& ExtendData) {}
+	static void WhenGamePostLoad(UObject* Obj, const FGameSerializerExtendDataContainer& ExtendData) { Execute_WhenGamePostLoad(Obj, ExtendData); }
 
-	UFUNCTION(BlueprintNativeEvent, Category = "游戏|读档")
+	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
 	FGameSerializerExtendDataContainer WhenGamePreSave();
 	virtual FGameSerializerExtendDataContainer WhenGamePreSave_Implementation() { return FGameSerializerExtendDataContainer(); }
 	static FGameSerializerExtendDataContainer WhenGamePreSave(UObject* Obj) { return Execute_WhenGamePreSave(Obj); }

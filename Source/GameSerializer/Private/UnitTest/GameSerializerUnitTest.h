@@ -56,7 +56,7 @@ public:
 		ChildObject = CreateDefaultSubobject<UChildObject>(TEXT("Child"));
 	}
 
-	void WhenGamePostLoad_Implementation(const FGameSerializerExtendData& ExtendData) override;
+	void WhenGamePostLoad_Implementation(const FGameSerializerExtendDataContainer& ExtendData) override;
 	FGameSerializerExtendDataContainer WhenGamePreSave_Implementation() override;
 
 	UPROPERTY(SaveGame)

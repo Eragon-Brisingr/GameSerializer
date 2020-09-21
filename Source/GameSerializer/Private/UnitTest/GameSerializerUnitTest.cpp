@@ -5,9 +5,9 @@
 
 #include "GameSerializerCore.h"
 
-void UParentObject::WhenGamePostLoad_Implementation(const FGameSerializerExtendData& ExtendData)
+void UParentObject::WhenGamePostLoad_Implementation(const FGameSerializerExtendDataContainer& ExtendData)
 {
-	const FGameSerializerExtendData_UnitTest& UnitTest = static_cast<const FGameSerializerExtendData_UnitTest&>(ExtendData);
+	const FGameSerializerExtendData_UnitTest& UnitTest = static_cast<const FGameSerializerExtendData_UnitTest&>(*ExtendData.ExtendData.Get());
 	ensure(UnitTest.TestValue1 == 100);
 }
 
