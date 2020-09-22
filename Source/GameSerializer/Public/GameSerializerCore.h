@@ -22,9 +22,7 @@ namespace GameSerializer
 		EPropertyFlags CheckFlags = DefaultCheckFlags;
 		EPropertyFlags SkipFlags = DefaultSkipFlags;
 
-		using FPersistentInstanceGraph = TMap<UObject*, FObjectIdx>;
-
-		FStructToJson(const FPersistentInstanceGraph* PersistentInstanceGraph);
+		FStructToJson();
 
 		void AddObjects(const FString& FieldName, TArray<UObject*> Objects);
 
@@ -38,12 +36,9 @@ namespace GameSerializer
 
 		const TSharedRef<FJsonObject>& GetResultJson() const { return RootJsonObject; }
 
-		const FPersistentInstanceGraph& GetInstanceGraph() const { return ObjectIdxMap; }
 	private:
-		const FPersistentInstanceGraph* PersistentInstanceGraph;
-
 		TSharedRef<FJsonObject> RootJsonObject = MakeShared<FJsonObject>();
-		TSharedRef<FJsonObject> AssetJsonObject = MakeShared<FJsonObject>();
+		TSharedRef<FJsonObject> ExternalJsonObject = MakeShared<FJsonObject>();
 		TSharedRef<FJsonObject> DynamicJsonObject = MakeShared<FJsonObject>();
 
 		struct FOuterData
@@ -58,12 +53,12 @@ namespace GameSerializer
 		TArray<FOuterData> OuterChain = TArray<FOuterData>();
 
 		FObjectIdx ObjectUniqueIdx = 0;
-		FObjectIdx AssetUniqueIdx = 0;
+		FObjectIdx ExternalObjectUniqueIdx = 0;
 
-		TMap<const UObject*, FObjectIdx> AssetIdxMap;
+		TMap<const UObject*, FObjectIdx> ExternalObjectIdxMap;
 		TMap<UObject*, FObjectIdx> ObjectIdxMap;
 
-		FObjectIdx GetAssetIndex(const UObject* Asset);
+		FObjectIdx GetExternalObjectIndex(const UObject* ExternalObject);
 
 		void ObjectToJsonObject(const TSharedRef<FJsonObject>& JsonObject, UObject* Object);
 
@@ -75,9 +70,7 @@ namespace GameSerializer
 		EPropertyFlags CheckFlags = DefaultCheckFlags;
 		EPropertyFlags SkipFlags = DefaultSkipFlags;
 		
-		using FPersistentInstanceGraph = TMap<FObjectIdx, UObject*>;
-
-		FJsonToStruct(UObject* Outer, const TSharedRef<FJsonObject>& RootJsonObject, const FPersistentInstanceGraph* PersistentInstanceGraph);
+		FJsonToStruct(UObject* Outer, const TSharedRef<FJsonObject>& RootJsonObject);
 
 		TArray<UObject*> GetObjects(const FString& FieldName) const;
 	private:
@@ -86,9 +79,8 @@ namespace GameSerializer
 		
 		UObject* Outer;
 		TSharedRef<FJsonObject> RootJsonObject;
-		TArray<UObject*> AssetsArray = { nullptr };
+		TArray<UObject*> ExternalObjectsArray = { nullptr };
 		TArray<UObject*> ObjectsArray = { nullptr };
-		const FPersistentInstanceGraph* PersistentInstanceGraph;
 
 		TArray<AActor*> SpawnedActors;
 

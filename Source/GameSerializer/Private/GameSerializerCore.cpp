@@ -846,7 +846,7 @@ namespace GameSerializer
 	constexpr FObjectIdx PersistentStartIdx = -TNumericLimits<FObjectIdx>::Max() / 2;
 
 	constexpr EObjectFlags RF_InPackageFlags = RF_ClassDefaultObject | RF_ArchetypeObject | RF_DefaultSubObject | RF_InheritableComponentTemplate | RF_WasLoaded | RF_LoadCompleted;
-	constexpr TCHAR AssetObjectsFieldName[] = TEXT("__AssetObjects");
+	constexpr TCHAR ExternalObjectsFieldName[] = TEXT("__ExternalObjects");
 	constexpr TCHAR DynamicObjectsFieldName[] = TEXT("__DynamicObjects");
 	constexpr TCHAR SubObjectsFieldName[] = TEXT("__SubObjects");
 	constexpr TCHAR ObjectIdxFieldName[] = TEXT("__Idx");
@@ -857,10 +857,9 @@ namespace GameSerializer
 
 	using namespace CustomJsonConverter;
 
-	FStructToJson::FStructToJson(const FPersistentInstanceGraph* PersistentInstanceGraph)
-		: PersistentInstanceGraph(PersistentInstanceGraph)
+	FStructToJson::FStructToJson()
 	{
-		RootJsonObject->SetObjectField(AssetObjectsFieldName, AssetJsonObject);
+		RootJsonObject->SetObjectField(ExternalObjectsFieldName, ExternalJsonObject);
 		RootJsonObject->SetObjectField(DynamicObjectsFieldName, DynamicJsonObject);
 	}
 
@@ -898,21 +897,31 @@ namespace GameSerializer
 		RootJsonObject->SetObjectField(FieldName, JsonObject);
 	}
 
-	FObjectIdx FStructToJson::GetAssetIndex(const UObject* Asset)
+	FObjectIdx FStructToJson::GetExternalObjectIndex(const UObject* ExternalObject)
 	{
-		FObjectIdx& AssetIdx = AssetIdxMap.FindOrAdd(Asset);
-		if (AssetIdx == NullIdx)
+		FObjectIdx& ExternalObjectIdx = ExternalObjectIdxMap.FindOrAdd(ExternalObject);
+		if (ExternalObjectIdx == NullIdx)
 		{
-			AssetUniqueIdx -= 1;
-			check(AssetIdx > PersistentStartIdx);
+			ExternalObjectUniqueIdx -= 1;
 
-			AssetIdx = AssetUniqueIdx;
+			ExternalObjectIdx = ExternalObjectUniqueIdx;
 
 			FString SoftObjectPathString;
-			FSoftObjectPath(Asset).ExportTextItem(SoftObjectPathString, FSoftObjectPath(), nullptr, PPF_None, nullptr);
-			AssetJsonObject->SetStringField(FString::FromInt(AssetUniqueIdx), SoftObjectPathString);
+			FSoftObjectPath SoftObjectPath(ExternalObject);
+#if WITH_EDITOR
+			const FString Path = SoftObjectPath.ToString();
+			const FString ShortPackageOuterAndName = FPackageName::GetLongPackageAssetName(Path);
+			if (ShortPackageOuterAndName.StartsWith(PLAYWORLD_PACKAGE_PREFIX))
+			{
+				const int32 Idx = ShortPackageOuterAndName.Find(TEXT("_"), ESearchCase::IgnoreCase, ESearchDir::FromStart, 7);
+				FString OriginPath = FString::Printf(TEXT("%s/%s"), *FPackageName::GetLongPackagePath(Path), *ShortPackageOuterAndName.Mid(Idx + 1));
+				SoftObjectPath.SetPath(MoveTemp(OriginPath));
+			}
+#endif
+			SoftObjectPath.ExportTextItem(SoftObjectPathString, FSoftObjectPath(), nullptr, PPF_None, nullptr);
+			ExternalJsonObject->SetStringField(FString::FromInt(ExternalObjectUniqueIdx), SoftObjectPathString);
 		}
-		return AssetIdx;
+		return ExternalObjectIdx;
 	}
 
 	void FStructToJson::ObjectToJsonObject(const TSharedRef<FJsonObject>& JsonObject, UObject* Object)
@@ -925,7 +934,7 @@ namespace GameSerializer
 
 		JsonObject->SetNumberField(ObjectIdxFieldName, ObjectUniqueIdx);
 		JsonObject->SetStringField(ObjectNameFieldName, Object->GetName());
-		JsonObject->SetNumberField(ObjectClassFieldName, GetAssetIndex(Class));
+		JsonObject->SetNumberField(ObjectClassFieldName, GetExternalObjectIndex(Class));
 
 		OuterChain.Add(FOuterData(Object, JsonObject));
 		bool bSameValue;
@@ -951,8 +960,8 @@ namespace GameSerializer
 				// TODO：找到直接判断是否在持久性包内的方法
 				if (SubObject->IsAsset() || SubObject->IsA<UStruct>())
 				{
-					const FObjectIdx AssetIdx = GetAssetIndex(SubObject);
-					return MakeShared<FJsonValueNumber>(AssetIdx);
+					const FObjectIdx ExternalObjectIdx = GetExternalObjectIndex(SubObject);
+					return MakeShared<FJsonValueNumber>(ExternalObjectIdx);
 				}
 
 				// 能找到Outer的储存所有数据
@@ -983,17 +992,25 @@ namespace GameSerializer
 							
 							if (SubObject->Implements<UGameSerializerInterface>())
 							{
+								const TSharedRef<FJsonObject> ExtendDataContainerJsonObject = MakeShared<FJsonObject>();
+
 								const FGameSerializerExtendDataContainer ExtendDataContainer = IGameSerializerInterface::WhenGamePreSave(SubObject);
+								const FObjectIdx StructIdx = GetExternalObjectIndex(ExtendDataContainer.Struct);
+								ExtendDataContainerJsonObject->SetNumberField(ExtendDataTypeFieldName, StructIdx);
+
 								if (ExtendDataContainer.Struct && ensure(ExtendDataContainer.ExtendData.IsValid()))
 								{
-									const TSharedRef<FJsonObject> ExtendDataContainerJsonObject = MakeShared<FJsonObject>();
-									SubObjectJsonObject->SetObjectField(ExtendDataFieldName, ExtendDataContainerJsonObject);
-
-									const FObjectIdx StructIdx = GetAssetIndex(ExtendDataContainer.Struct);
-									ExtendDataContainerJsonObject->SetNumberField(ExtendDataTypeFieldName, StructIdx);
-									// TODO：剔除默认值
+									FGameSerializerExtendData* DefaultExtendData = static_cast<FGameSerializerExtendData*>(FMemory::Malloc(ExtendDataContainer.Struct->GetStructureSize()));
+									ExtendDataContainer.Struct->InitializeStruct(DefaultExtendData);
 									bool bSubObjectSameValue;
-									ensure(StructToJson::UStructToJsonAttributes(ExtendDataContainer.Struct, ExtendDataContainer.ExtendData.Get(), nullptr, bSubObjectSameValue, ExtendDataContainerJsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
+									ensure(StructToJson::UStructToJsonAttributes(ExtendDataContainer.Struct, ExtendDataContainer.ExtendData.Get(), DefaultExtendData, bSubObjectSameValue, ExtendDataContainerJsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
+									ExtendDataContainer.Struct->DestroyStruct(DefaultExtendData);
+									FMemory::Free(DefaultExtendData);
+
+									if (bSubObjectSameValue == false)
+									{
+										SubObjectJsonObject->SetObjectField(ExtendDataFieldName, ExtendDataContainerJsonObject);
+									}
 								}
 							}
 							ObjectToJsonObject(SubObjectJsonObject, SubObject);
@@ -1003,16 +1020,9 @@ namespace GameSerializer
 					}
 				}
 
-				if (PersistentInstanceGraph)
-				{
-					if (const FObjectIdx* ObjectIdx = PersistentInstanceGraph->Find(SubObject))
-					{
-						return MakeShared<FJsonValueNumber>(-*ObjectIdx + PersistentStartIdx);
-					}
-				}
-
-				// TODO:处理Outer不在存档作用域的问题
-				checkNoEntry();
+				// 不存在Outer，存软引用
+				const FObjectIdx ExternalObjectIdx = GetExternalObjectIndex(SubObject);
+				return MakeShared<FJsonValueNumber>(ExternalObjectIdx);
 			}
 			else
 			{
@@ -1022,18 +1032,24 @@ namespace GameSerializer
 		return nullptr;
 	}
 
-	FJsonToStruct::FJsonToStruct(UObject* Outer, const TSharedRef<FJsonObject>& RootJsonObject, const FPersistentInstanceGraph* PersistentInstanceGraph)
+	FJsonToStruct::FJsonToStruct(UObject* Outer, const TSharedRef<FJsonObject>& RootJsonObject)
 		: Outer(Outer)
 	    , RootJsonObject(RootJsonObject)
-		, PersistentInstanceGraph(PersistentInstanceGraph)
 	{
-		// 加载资源
+		// 加载ExternalObject
 		{
-			const TSharedPtr<FJsonObject> AssetJsonObject = RootJsonObject->GetObjectField(AssetObjectsFieldName);
-			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : AssetJsonObject->Values)
+#if WITH_EDITOR
+			if (Outer)
+			{
+				const int32 PIEInstanceID = Outer->GetOutermost()->PIEInstanceID;
+				TGuardValue<int32> GPlayInEditorIDGuard(GPlayInEditorID, PIEInstanceID);
+			}
+#endif
+			const TSharedPtr<FJsonObject> ExternalObjectJsonObject = RootJsonObject->GetObjectField(ExternalObjectsFieldName);
+			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : ExternalObjectJsonObject->Values)
 			{
 				const FObjectIdx Idx = -FCString::Atoi(*Pair.Key);
-				AssetsArray.SetNumUninitialized(Idx + 1);
+				ExternalObjectsArray.SetNumUninitialized(Idx + 1);
 
 				const FString SoftObjectPathString = Pair.Value->AsString();
 				const TCHAR* Buffer = *SoftObjectPathString;
@@ -1041,7 +1057,9 @@ namespace GameSerializer
 				FSoftObjectPath SoftObjectPath;
 				SoftObjectPath.ImportTextItem(Buffer, PPF_None, nullptr, nullptr);
 
-				AssetsArray[Idx] = SoftObjectPath.TryLoad();
+				UObject* ExternalObject = SoftObjectPath.TryLoad();
+				ensure(ExternalObject);
+				ExternalObjectsArray[Idx] = ExternalObject;
 			}
 		}
 
@@ -1084,7 +1102,7 @@ namespace GameSerializer
 					const TSharedPtr<FJsonObject>* ExtendDataJsonObject;
 					if (InstancedObjectData.JsonObject->TryGetObjectField(ExtendDataFieldName, ExtendDataJsonObject))
 					{
-						UScriptStruct* Struct = CastChecked<UScriptStruct>(AssetsArray[-int32(ExtendDataJsonObject->Get()->GetNumberField(ExtendDataTypeFieldName))]);
+						UScriptStruct* Struct = CastChecked<UScriptStruct>(ExternalObjectsArray[-int32(ExtendDataJsonObject->Get()->GetNumberField(ExtendDataTypeFieldName))]);
 						FGameSerializerExtendData* ExtendData = static_cast<FGameSerializerExtendData*>(FMemory::Malloc(Struct->GetStructureSize()));
 						Struct->InitializeStruct(ExtendData);
 						ensure(JsonToStruct::JsonAttributesToUStructWithContainer(ExtendDataJsonObject->Get()->Values, Struct, ExtendData, Struct, ExtendData, CheckFlags, SkipFlags, JsonObjectIdxToObject));
@@ -1124,7 +1142,7 @@ namespace GameSerializer
 	UObject* FJsonToStruct::JsonObjectToInstanceObject(const TSharedRef<FJsonObject>& JsonObject, FObjectIdx ObjectIdx)
 	{
 		const FString ObjectName = JsonObject->GetStringField(ObjectNameFieldName);
-		UClass* ObjectClass = CastChecked<UClass>(AssetsArray[-JsonObject->GetIntegerField(ObjectClassFieldName)]);
+		UClass* ObjectClass = CastChecked<UClass>(ExternalObjectsArray[-JsonObject->GetIntegerField(ObjectClassFieldName)]);
 
 		UObject* Object = FindObject<UObject>(Outer, *ObjectName);
 
@@ -1136,7 +1154,7 @@ namespace GameSerializer
 		
 		if (Object)
 		{
-			check(Object->IsA(ObjectClass));
+			ensure(Object->IsA(ObjectClass));
 		}
 		else
 		{
@@ -1197,15 +1215,10 @@ namespace GameSerializer
 			UObject* DynamicObject = ObjectsArray[ObjectIdx];
 			return DynamicObject;
 		}
-		else if (ObjectIdx > PersistentStartIdx)
-		{
-			UObject* AssetObject = AssetsArray[-ObjectIdx];
-			return AssetObject;
-		}
 		else
 		{
-			UObject* PersistentObject = PersistentInstanceGraph->FindChecked(-(ObjectIdx - PersistentStartIdx));
-			return PersistentObject;
+			UObject* ExternalObject = ExternalObjectsArray[-ObjectIdx];
+			return ExternalObject;
 		}
 	}
 

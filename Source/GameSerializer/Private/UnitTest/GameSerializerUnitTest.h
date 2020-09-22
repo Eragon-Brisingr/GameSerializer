@@ -16,7 +16,7 @@ public:
 	int32 TestValue1 = 0;
 
 	UPROPERTY(SaveGame)
-	TMap<int32, FString> TestValue2;
+	TMap<int32, FString> TestValue2 = { {4, "Test"} };
 };
 
 USTRUCT()
