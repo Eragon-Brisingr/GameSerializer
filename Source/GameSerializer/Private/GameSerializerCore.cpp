@@ -4,6 +4,7 @@
 #include "GameSerializerCore.h"
 #include <JsonObjectWrapper.h>
 #include <Internationalization/Culture.h>
+#include <Misc/ScopeExit.h>
 
 #include "GameSerializerInterface.h"
 #include "GameSerializer_Log.h"
@@ -840,22 +841,23 @@ namespace CustomJsonConverter
 	};
 }
 
-namespace GameSerializer
+namespace GameSerializerCore
 {
 	constexpr FObjectIdx NullIdx = 0;
-	constexpr FObjectIdx PersistentStartIdx = -TNumericLimits<FObjectIdx>::Max() / 2;
 
-	constexpr EObjectFlags RF_InPackageFlags = RF_ClassDefaultObject | RF_ArchetypeObject | RF_DefaultSubObject | RF_InheritableComponentTemplate | RF_WasLoaded | RF_LoadCompleted;
-	constexpr TCHAR ExternalObjectsFieldName[] = TEXT("__ExternalObjects");
-	constexpr TCHAR DynamicObjectsFieldName[] = TEXT("__DynamicObjects");
-	constexpr TCHAR SubObjectsFieldName[] = TEXT("__SubObjects");
-	constexpr TCHAR ObjectIdxFieldName[] = TEXT("__Idx");
-	constexpr TCHAR ObjectNameFieldName[] = TEXT("__Name");
-	constexpr TCHAR ObjectClassFieldName[] = TEXT("__Class");
-	constexpr TCHAR ExtendDataFieldName[] = TEXT("__ExtendData");
-	constexpr TCHAR ExtendDataTypeFieldName[] = TEXT("__Type");
-
+	namespace FieldName
+	{
+		constexpr TCHAR ExternalObjectsFieldName[] = TEXT("__ExternalObjects");
+		constexpr TCHAR DynamicObjectsFieldName[] = TEXT("__DynamicObjects");
+		constexpr TCHAR SubObjectsFieldName[] = TEXT("__SubObjects");
+		constexpr TCHAR ObjectNameFieldName[] = TEXT("__Name");
+		constexpr TCHAR ObjectClassFieldName[] = TEXT("__Class");
+		constexpr TCHAR ExtendDataFieldName[] = TEXT("__ExtendData");
+		constexpr TCHAR ExtendDataTypeFieldName[] = TEXT("__Type");
+	}
+	
 	using namespace CustomJsonConverter;
+	using namespace FieldName;
 
 	FStructToJson::FStructToJson()
 	{
@@ -926,20 +928,42 @@ namespace GameSerializer
 
 	void FStructToJson::ObjectToJsonObject(const TSharedRef<FJsonObject>& JsonObject, UObject* Object)
 	{
+		OuterChain.Add(FOuterData(Object, JsonObject));
+		ON_SCOPE_EXIT
+		{
+			OuterChain.Pop();
+		};
 		UClass* Class = Object->GetClass();
 
 		check(ObjectIdxMap.Contains(Object) == false);
 		ObjectUniqueIdx += 1;
 		ObjectIdxMap.Add(Object, ObjectUniqueIdx);
 
-		JsonObject->SetNumberField(ObjectIdxFieldName, ObjectUniqueIdx);
 		JsonObject->SetStringField(ObjectNameFieldName, Object->GetName());
 		JsonObject->SetNumberField(ObjectClassFieldName, GetExternalObjectIndex(Class));
 
-		OuterChain.Add(FOuterData(Object, JsonObject));
+		const FGameSerializerExtendDataContainer ExtendDataContainer = IGameSerializerInterface::WhenGamePreSave(Object);
+		if (ExtendDataContainer.Struct && ensure(ExtendDataContainer.ExtendData.IsValid()))
+		{
+			const TSharedRef<FJsonObject> ExtendDataContainerJsonObject = MakeShared<FJsonObject>();
+			const FObjectIdx StructIdx = GetExternalObjectIndex(ExtendDataContainer.Struct);
+			ExtendDataContainerJsonObject->SetNumberField(ExtendDataTypeFieldName, StructIdx);
+
+			FGameSerializerExtendData* DefaultExtendData = static_cast<FGameSerializerExtendData*>(FMemory::Malloc(ExtendDataContainer.Struct->GetStructureSize()));
+			ExtendDataContainer.Struct->InitializeStruct(DefaultExtendData);
+			bool bSubObjectSameValue;
+			ensure(StructToJson::UStructToJsonAttributes(ExtendDataContainer.Struct, ExtendDataContainer.ExtendData.Get(), DefaultExtendData, bSubObjectSameValue, ExtendDataContainerJsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
+			ExtendDataContainer.Struct->DestroyStruct(DefaultExtendData);
+			FMemory::Free(DefaultExtendData);
+
+			if (bSubObjectSameValue == false)
+			{
+				JsonObject->SetObjectField(ExtendDataFieldName, ExtendDataContainerJsonObject);
+			}
+		}
+
 		bool bSameValue;
 		ensure(StructToJson::UStructToJsonAttributes(Class, Object, Class->GetDefaultObject(), bSameValue, JsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
-		OuterChain.Pop();
 	}
 
 	TSharedPtr<FJsonValue> FStructToJson::ConvertObjectToJson(FProperty* Property, const void* Value, const void* Default, bool& bSameValue)
@@ -990,29 +1014,6 @@ namespace GameSerializer
 							const FObjectIdx ObjectIdx = ObjectUniqueIdx + 1;
 							const TSharedRef<FJsonObject> SubObjectJsonObject = MakeShared<FJsonObject>();
 							
-							if (SubObject->Implements<UGameSerializerInterface>())
-							{
-								const TSharedRef<FJsonObject> ExtendDataContainerJsonObject = MakeShared<FJsonObject>();
-
-								const FGameSerializerExtendDataContainer ExtendDataContainer = IGameSerializerInterface::WhenGamePreSave(SubObject);
-								const FObjectIdx StructIdx = GetExternalObjectIndex(ExtendDataContainer.Struct);
-								ExtendDataContainerJsonObject->SetNumberField(ExtendDataTypeFieldName, StructIdx);
-
-								if (ExtendDataContainer.Struct && ensure(ExtendDataContainer.ExtendData.IsValid()))
-								{
-									FGameSerializerExtendData* DefaultExtendData = static_cast<FGameSerializerExtendData*>(FMemory::Malloc(ExtendDataContainer.Struct->GetStructureSize()));
-									ExtendDataContainer.Struct->InitializeStruct(DefaultExtendData);
-									bool bSubObjectSameValue;
-									ensure(StructToJson::UStructToJsonAttributes(ExtendDataContainer.Struct, ExtendDataContainer.ExtendData.Get(), DefaultExtendData, bSubObjectSameValue, ExtendDataContainerJsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
-									ExtendDataContainer.Struct->DestroyStruct(DefaultExtendData);
-									FMemory::Free(DefaultExtendData);
-
-									if (bSubObjectSameValue == false)
-									{
-										SubObjectJsonObject->SetObjectField(ExtendDataFieldName, ExtendDataContainerJsonObject);
-									}
-								}
-							}
 							ObjectToJsonObject(SubObjectJsonObject, SubObject);
 							SubObjectsJsonObject->SetObjectField(FString::FromInt(ObjectIdx), SubObjectJsonObject);
 							return MakeShared<FJsonValueNumber>(ObjectIdx);

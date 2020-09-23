@@ -10,7 +10,7 @@
  * 
  */
 
-namespace GameSerializer
+namespace GameSerializerCore
 {
 	using FObjectIdx = int32;
 

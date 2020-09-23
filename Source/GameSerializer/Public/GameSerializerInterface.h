@@ -4,61 +4,63 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Interface.h"
+#include "GameSerializerExtendData.h"
 #include "GameSerializerInterface.generated.h"
 
-USTRUCT(BlueprintType, BlueprintInternalUseOnly)
-struct GAMESERIALIZER_API FGameSerializerExtendData
-{
-	GENERATED_BODY()
-public:
-	virtual ~FGameSerializerExtendData() {}
-};
-
-USTRUCT(BlueprintType, BlueprintInternalUseOnly)
-struct GAMESERIALIZER_API FGameSerializerExtendDataContainer
-{
-	GENERATED_BODY()
-public:
-	FGameSerializerExtendDataContainer() = default;
-	
-	UPROPERTY()
-	const UScriptStruct* Struct = nullptr;
-
-	TSharedPtr<FGameSerializerExtendData> ExtendData;
-	
-	template<typename T>
-	static FGameSerializerExtendDataContainer Make(const T& ExtendData)
-	{
-		FGameSerializerExtendDataContainer Container;
-		Container.Struct = T::StaticStruct();
-		Container.ExtendData = MakeShared<T>(ExtendData);
-		return Container;
-	}
-};
-
-// This class does not need to be modified.
 UINTERFACE(MinimalAPI)
 class UGameSerializerInterface : public UInterface
 {
 	GENERATED_BODY()
 };
 
-/**
- * 
- */
 class GAMESERIALIZER_API IGameSerializerInterface
 {
 	GENERATED_BODY()
-
-	// Add interface functions to this class. This is the class that will be inherited to implement this interface.
 public:
 	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
-	void WhenGamePostLoad(const FGameSerializerExtendDataContainer& ExtendData);
-	virtual void WhenGamePostLoad_Implementation(const FGameSerializerExtendDataContainer& ExtendData) {}
-	static void WhenGamePostLoad(UObject* Obj, const FGameSerializerExtendDataContainer& ExtendData) { Execute_WhenGamePostLoad(Obj, ExtendData); }
+	FGameSerializerExtendDataContainer WhenGamePreSave();
+	virtual FGameSerializerExtendDataContainer WhenGamePreSave_Implementation();
+	static FGameSerializerExtendDataContainer WhenGamePreSave(UObject* Obj);
 
 	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
-	FGameSerializerExtendDataContainer WhenGamePreSave();
-	virtual FGameSerializerExtendDataContainer WhenGamePreSave_Implementation() { return FGameSerializerExtendDataContainer(); }
-	static FGameSerializerExtendDataContainer WhenGamePreSave(UObject* Obj) { return Execute_WhenGamePreSave(Obj); }
+	void WhenGamePostLoad(const FGameSerializerExtendDataContainer& ExtendData);
+	virtual void WhenGamePostLoad_Implementation(const FGameSerializerExtendDataContainer& ExtendData);
+	static void WhenGamePostLoad(UObject* Obj, const FGameSerializerExtendDataContainer& ExtendData);
+};
+
+UINTERFACE(MinimalAPI)
+class UComponentGameSerializerInterface : public UGameSerializerInterface
+{
+	GENERATED_BODY()
+};
+
+class GAMESERIALIZER_API IComponentGameSerializerInterface : public IGameSerializerInterface
+{
+	GENERATED_BODY()
+public:
+	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
+	void WhenGameInit();
+	virtual void WhenGameInit_Implementation();
+	static void WhenGameInit(UObject* Obj);
+};
+
+UINTERFACE(MinimalAPI)
+class UActorGameSerializerInterface : public UGameSerializerInterface
+{
+	GENERATED_BODY()
+};
+
+class GAMESERIALIZER_API IActorGameSerializerInterface : public IGameSerializerInterface
+{
+	GENERATED_BODY()
+public:
+	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
+	void WhenGameInit();
+	virtual void WhenGameInit_Implementation();
+	static void WhenGameInit(UObject* Obj);
+
+	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
+	bool CanGameSerialized() const;
+	virtual bool CanGameSerialized_Implementation() const { return true; }
+	static bool CanGameSerialized(UObject* Obj) { return Execute_CanGameSerialized(Obj); }
 };
