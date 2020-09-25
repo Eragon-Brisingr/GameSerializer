@@ -29,10 +29,10 @@ namespace GameSerializerCore
 
 		void AddStruct(const FString& FieldName, UScriptStruct* Struct, const void* Value, const void* DefaultValue);
 		template<typename T>
-		void AddStruct(const FString& FieldName, UScriptStruct* Struct, const T& Value)
+		void AddStruct(const FString& FieldName, const T& Value)
 		{
 			const T DefaultValue{};
-			AddStruct(FieldName, Struct, &Value, &DefaultValue);
+			AddStruct(FieldName, TBaseStructure<T>::Get(), &Value, &DefaultValue);
 		}
 
 		const TSharedRef<FJsonObject>& GetResultJson() const { return RootJsonObject; }
@@ -87,6 +87,15 @@ namespace GameSerializerCore
 		
 		TArray<UObject*> GetObjects(const FString& FieldName) const;
 		UObject* GetObject(const FString& FieldName) const;
+
+		void GetStruct(const FString& FieldName, UScriptStruct* Struct, void* Value);
+		template<typename T>
+		T GetStruct(const FString& FieldName)
+		{
+			T Value{};
+			GetStruct(FieldName, TBaseStructure<T>::Get(), &Value);
+			return Value;
+		}
 	private:
 		UObject* JsonObjectToInstanceObject(const TSharedRef<FJsonObject>& JsonObject, FObjectIdx ObjectIdx);
 		UObject* GetObjectByIdx(FObjectIdx ObjectIdx) const;

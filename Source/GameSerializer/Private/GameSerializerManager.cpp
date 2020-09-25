@@ -15,11 +15,37 @@
 namespace JsonFieldName
 {
 	constexpr TCHAR LevelActors[] = TEXT("LevelActors");
+	constexpr TCHAR WorldOrigin[] = TEXT("WorldOrigin");
 
 	constexpr TCHAR PlayerPawn[] = TEXT("Pawn");
 	constexpr TCHAR PlayerState[] = TEXT("PlayerState");
 	constexpr TCHAR PlayerController[] = TEXT("PlayerController");
 }
+
+static UScriptStruct* StaticGetBaseStructureInternal(FName Name)
+{
+	static UPackage* CoreUObjectPkg = FindObjectChecked<UPackage>(nullptr, TEXT("/Script/CoreUObject"));
+
+	UScriptStruct* Result = (UScriptStruct*)StaticFindObjectFast(UScriptStruct::StaticClass(), CoreUObjectPkg, Name, false, false, RF_NoFlags, EInternalObjectFlags::None);
+
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+	if (!Result)
+	{
+		UE_LOG(LogClass, Fatal, TEXT("Failed to find native struct '%s.%s'"), *CoreUObjectPkg->GetName(), *Name.ToString());
+	}
+#endif
+	return Result;
+}
+
+template<>
+struct TBaseStructure<FIntVector>
+{
+	static UScriptStruct* Get()
+	{
+		static UScriptStruct* Struct = StaticGetBaseStructureInternal(TEXT("IntVector"));
+		return Struct;
+	}
+};
 
 void UGameSerializerLevelComponent::OnUnregister()
 {
@@ -137,7 +163,10 @@ struct FLevelDeserializer : public GameSerializerCore::FJsonToStruct
 		: Super(Level, RootJsonObject)
 	{
 		CheckFlags = CPF_SaveGame;
+		OldWorldOffset = GetStruct<FIntVector>(JsonFieldName::WorldOrigin);
 	}
+
+	FIntVector OldWorldOffset;
 };
 
 DECLARE_CYCLE_STAT(TEXT("GameSerializerManager_LoadLevel"), STAT_GameSerializerManage_LoadLevel, STATGROUP_GameSerializer);
@@ -193,6 +222,8 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 			}
 
 			FLevelDeserializer LevelDeserializer(Level, JsonObject.GetValue());
+			const FIntVector OldWorldOrigin = LevelDeserializer.GetStruct<FIntVector>(JsonFieldName::WorldOrigin);
+			TGuardValue<FIntVector> WorldOffsetGuard(FActorGameSerializerExtendData::WorldOffset, OldWorldOrigin - Level->GetWorld()->OriginLocation);
 			LevelDeserializer.LoadAllData();
 			const TArray<UObject*> LoadedActors = LevelDeserializer.GetObjects(JsonFieldName::LevelActors);
 			for (AActor* Actor : PrepareLoadActors)
@@ -326,6 +357,7 @@ void UGameSerializerManager::SerializeLevel(ULevel* Level)
 	};
 
 	FLevelSerializer LevelSerializer;
+	LevelSerializer.AddStruct(JsonFieldName::WorldOrigin, Level->GetWorld()->OriginLocation);
 	LevelSerializer.AddObjects(JsonFieldName::LevelActors, SerializeList);
 
 	const TSharedRef<FJsonObject> JsonObject = LevelSerializer.GetResultJson();
@@ -384,6 +416,8 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 			PlayerDeserializer.RetargetDynamicObjectName(JsonFieldName::PlayerState, PlayerState->GetFName());
 			PlayerDeserializer.RetargetDynamicObjectName(JsonFieldName::PlayerPawn, Pawn->GetFName());
 			
+			const FIntVector OldWorldOrigin = PlayerDeserializer.GetStruct<FIntVector>(JsonFieldName::WorldOrigin);
+			TGuardValue<FIntVector> WorldOffsetGuard(FActorGameSerializerExtendData::WorldOffset, OldWorldOrigin - Pawn->GetWorld()->OriginLocation);
 			PlayerDeserializer.LoadAllData();
 		}
 	}
@@ -404,6 +438,7 @@ void UGameSerializerManager::OnPlayerPawnEndPlay(AActor* PawnActor, EEndPlayReas
 		}
 	};
 	FPlayerSerializer PlayerSerializer;
+	PlayerSerializer.AddStruct(JsonFieldName::WorldOrigin, Pawn->GetWorld()->OriginLocation);
 	PlayerSerializer.AddObject(JsonFieldName::PlayerController, PlayerData.PlayerController.Get(true));
 	PlayerSerializer.AddObject(JsonFieldName::PlayerState, PlayerData.PlayerState.Get(true));
 	PlayerSerializer.AddObject(JsonFieldName::PlayerPawn, Pawn);

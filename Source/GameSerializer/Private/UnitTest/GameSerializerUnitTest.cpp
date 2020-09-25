@@ -35,7 +35,7 @@ void UGameSerializerUnitTest::ExecuteTest()
 
 	GameSerializerCore::FStructToJson GameSerializer;
 	GameSerializer.AddObjects(TEXT("ObjectList"), { RootObject, RootObject, nullptr });
-	GameSerializer.AddStruct(TEXT("FTestSerializeData"), FTestSerializeData::StaticStruct(), SerializeData1);
+	GameSerializer.AddStruct(TEXT("FTestSerializeData"), SerializeData1);
 
 	const TSharedRef<FJsonObject> JsonObject = GameSerializer.GetResultJson();
 

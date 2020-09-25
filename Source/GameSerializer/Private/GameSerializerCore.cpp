@@ -890,7 +890,10 @@ namespace GameSerializerCore
 		const TSharedRef<FJsonObject> JsonObject = MakeShared<FJsonObject>();
 		bool bSameValue;
 		ensure(StructToJson::UStructToJsonAttributes(Struct, Value, DefaultValue, bSameValue, JsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
-		RootJsonObject->SetObjectField(FieldName, JsonObject);
+		if (bSameValue == false)
+		{
+			RootJsonObject->SetObjectField(FieldName, JsonObject);
+		}
 	}
 
 	FObjectIdx FStructToJson::GetExternalObjectIndex(const UObject* ExternalObject)
@@ -1199,6 +1202,16 @@ namespace GameSerializerCore
 	UObject* FJsonToStruct::GetObject(const FString& FieldName) const
 	{
 		return GetObjectByIdx(int32(RootJsonObject->GetNumberField(FieldName)));
+	}
+
+	void FJsonToStruct::GetStruct(const FString& FieldName, UScriptStruct* Struct, void* Value)
+	{
+		const TSharedPtr<FJsonObject>* StructJsonObjectPtr;
+		if (RootJsonObject->TryGetObjectField(FieldName, StructJsonObjectPtr))
+		{
+			const TSharedPtr<FJsonObject>& StructJsonObject = *StructJsonObjectPtr;
+			ensure(JsonToStruct::JsonAttributesToUStructWithContainer(StructJsonObject->Values, Struct, Value, Struct, Value, CheckFlags, SkipFlags, FCustomImportCallback::CreateRaw(this, &FJsonToStruct::JsonObjectIdxToObject)));
+		}
 	}
 
 	UObject* FJsonToStruct::JsonObjectToInstanceObject(const TSharedRef<FJsonObject>& JsonObject, FObjectIdx ObjectIdx)
