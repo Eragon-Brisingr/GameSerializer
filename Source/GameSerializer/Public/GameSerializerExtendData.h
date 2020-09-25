@@ -90,7 +90,7 @@ public:
 	FRotator Rotation;
 
 	UPROPERTY(SaveGame)
-	FVector Scale3D;
+	FVector Scale3D = FVector::OneVector;
 
 	static FIntVector WorldOffset;
 };

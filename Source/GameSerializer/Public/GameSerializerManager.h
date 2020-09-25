@@ -19,6 +19,20 @@ public:
 	void OnUnregister() override;
 };
 
+UCLASS()
+class UGameSerializerLevelStreamingLambda : public UObject
+{
+	GENERATED_BODY()
+public:
+	UGameSerializerLevelStreamingLambda();
+
+	DECLARE_DELEGATE_OneParam(FOnLevelLoaded, ULevel*);
+	FOnLevelLoaded OnLevelLoaded;
+	
+	UFUNCTION()
+	void WhenLevelLoaded();
+};
+
 /**
  * 
  */
@@ -32,17 +46,36 @@ public:
 	void Initialize(FSubsystemCollectionBase& Collection) override;
 	void Deinitialize() override;
 protected:
-	virtual TOptional<TSharedRef<FJsonObject>> TryLoadJsonObject(const FName& FileName);
-	virtual void SaveJsonObject(const FName& FileName, const TSharedRef<FJsonObject>& JsonObject);
+	virtual TOptional<TSharedRef<FJsonObject>> TryLoadJsonObject(const FString& Category, const FString& FileName);
+	virtual void SaveJsonObject(const TSharedRef<FJsonObject>& JsonObject, const FString& Category, const FString& FileName);
 
 	int32 UserIndex = 0;
 
 	void InitActorAndComponents(AActor* Actor);
 	void LoadOrInitLevel(ULevel* Level);
 	void LoadOrInitWorld(UWorld* World);
+
+	void SerializeLevel(ULevel* Level);
 private:
 	FDelegateHandle OnPostWorldInitialization_DelegateHandle;
 	FDelegateHandle OnLevelAdd_DelegateHandle;
 	uint8 bInvokeLoadGame : 1;
 	uint8 bShouldInitSpawnActor : 1;
+
+	TMap<TWeakObjectPtr<ULevel>, TSharedRef<struct FLevelDeserializer>> StreamLoadedLevelDataMap;
+	UPROPERTY(Transient)
+	TArray<UGameSerializerLevelStreamingLambda*> CachedLevelStreamingLambdas;
+public:
+	struct FPlayerData
+	{
+		TWeakObjectPtr<APlayerController> PlayerController;
+		TWeakObjectPtr<APlayerState> PlayerState;
+	};
+	TMap<TWeakObjectPtr<APawn>, FPlayerData> PlayerDataMap;
+
+	UFUNCTION(BlueprintCallable, Category = "游戏序列化")
+	APawn* LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, AController* NewPlayer, const FTransform& SpawnTransform);
+private:
+	UFUNCTION()
+	void OnPlayerPawnEndPlay(AActor* PawnActor, EEndPlayReason::Type EndPlayReason);
 };

@@ -25,6 +25,7 @@ namespace GameSerializerCore
 		FStructToJson();
 
 		void AddObjects(const FString& FieldName, TArray<UObject*> Objects);
+		void AddObject(const FString& FieldName, UObject* Object);
 
 		void AddStruct(const FString& FieldName, UScriptStruct* Struct, const void* Value, const void* DefaultValue);
 		template<typename T>
@@ -35,7 +36,6 @@ namespace GameSerializerCore
 		}
 
 		const TSharedRef<FJsonObject>& GetResultJson() const { return RootJsonObject; }
-
 	private:
 		TSharedRef<FJsonObject> RootJsonObject = MakeShared<FJsonObject>();
 		TSharedRef<FJsonObject> ExternalJsonObject = MakeShared<FJsonObject>();
@@ -62,6 +62,7 @@ namespace GameSerializerCore
 
 		void ObjectToJsonObject(const TSharedRef<FJsonObject>& JsonObject, UObject* Object);
 
+		FObjectIdx ConvertObjectToObjectIdx(UObject* Object);
 		TSharedPtr<FJsonValue> ConvertObjectToJson(FProperty* Property, const void* Value, const void* Default, bool& bSameValue);
 	};
 
@@ -72,10 +73,24 @@ namespace GameSerializerCore
 		
 		FJsonToStruct(UObject* Outer, const TSharedRef<FJsonObject>& RootJsonObject);
 
+		void LoadAllData() { LoadExternalObject(); InstanceDynamicObject(); LoadDynamicObjectJsonData(); DynamicActorFinishSpawning(); LoadDynamicObjectExtendData(); }
+		
+		void LoadExternalObject();
+		void InstanceDynamicObject();
+		void LoadDynamicObjectJsonData();
+		void DynamicActorFinishSpawning();
+		void LoadDynamicObjectExtendData();
+
+		void DynamicActorExecuteConstruction();
+		
+		void RetargetDynamicObjectName(const FString& FieldName, const FName& NewName);
+		
 		TArray<UObject*> GetObjects(const FString& FieldName) const;
+		UObject* GetObject(const FString& FieldName) const;
 	private:
 		UObject* JsonObjectToInstanceObject(const TSharedRef<FJsonObject>& JsonObject, FObjectIdx ObjectIdx);
 		UObject* GetObjectByIdx(FObjectIdx ObjectIdx) const;
+		bool JsonObjectIdxToObject(const TSharedPtr<FJsonValue>& JsonValue, FProperty* Property, void* OutValue);
 		
 		UObject* Outer;
 		TSharedRef<FJsonObject> RootJsonObject;

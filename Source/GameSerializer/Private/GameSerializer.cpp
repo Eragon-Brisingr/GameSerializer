@@ -2,7 +2,7 @@
 
 #include "GameSerializer.h"
 
-#include "UnitTest/GameSerializerUnitTest.h"
+#include "GameSerializerExtendData.h"
 
 #define LOCTEXT_NAMESPACE "FGameSerializerModule"
 
@@ -10,7 +10,7 @@ void FGameSerializerModule::StartupModule()
 {
 	// This code will execute after your module is loaded into memory; the exact timing is specified in the .uplugin file per-module
 
-	UGameSerializerUnitTest::ExecuteTest();
+	GameSerializerExtendDataFactory::RegisterFactory<FActorGameSerializerExtendDataFactory>(AActor::StaticClass());
 }
 
 void FGameSerializerModule::ShutdownModule()

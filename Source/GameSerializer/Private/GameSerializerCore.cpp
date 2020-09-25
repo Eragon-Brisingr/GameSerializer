@@ -865,30 +865,24 @@ namespace GameSerializerCore
 		RootJsonObject->SetObjectField(DynamicObjectsFieldName, DynamicJsonObject);
 	}
 
+	DECLARE_CYCLE_STAT(TEXT("StructToJson_AddObjects"), STAT_StructToJson_AddObjects, STATGROUP_GameSerializer);
 	void FStructToJson::AddObjects(const FString& FieldName, TArray<UObject*> Objects)
 	{
+		GameSerializerStatLog(STAT_StructToJson_AddObjects);
+		
 		TArray<TSharedPtr<FJsonValue>> ObjectsJsonArray;
 		for (UObject* Object : Objects)
 		{
-			if (Object == nullptr)
-			{
-				ObjectsJsonArray.Add(MakeShared<FJsonValueNumber>(NullIdx));
-			}
-			else if (FObjectIdx* ExistObjectIdx = ObjectIdxMap.Find(Object))
-			{
-				ObjectsJsonArray.Add(MakeShared<FJsonValueNumber>(*ExistObjectIdx));
-			}
-			else
-			{
-				const FObjectIdx NewObjectIdx = ObjectUniqueIdx + 1;
-				ObjectsJsonArray.Add(MakeShared<FJsonValueNumber>(NewObjectIdx));
-				
-				const TSharedRef<FJsonObject> JsonObject = MakeShared<FJsonObject>();
-				ObjectToJsonObject(JsonObject, Object);
-				DynamicJsonObject->SetObjectField(FString::FromInt(NewObjectIdx), JsonObject);
-			}
+			ObjectsJsonArray.Add(MakeShared<FJsonValueNumber>(ConvertObjectToObjectIdx(Object)));
 		}
 		RootJsonObject->SetArrayField(FieldName, ObjectsJsonArray);
+	}
+
+	void FStructToJson::AddObject(const FString& FieldName, UObject* Object)
+	{
+		check(Object);
+
+		RootJsonObject->SetNumberField(FieldName, ConvertObjectToObjectIdx(Object));
 	}
 
 	void FStructToJson::AddStruct(const FString& FieldName, UScriptStruct* Struct, const void* Value, const void* DefaultValue)
@@ -966,6 +960,33 @@ namespace GameSerializerCore
 		ensure(StructToJson::UStructToJsonAttributes(Class, Object, Class->GetDefaultObject(), bSameValue, JsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
 	}
 
+	FObjectIdx FStructToJson::ConvertObjectToObjectIdx(UObject* Object)
+	{
+		if (Object == nullptr)
+		{
+			return NullIdx;
+		}
+		else if (FObjectIdx* ExistObjectIdx = ObjectIdxMap.Find(Object))
+		{
+			return *ExistObjectIdx;
+		}
+		else if (Object->IsAsset() || Object->IsA<UStruct>())
+		{
+			const FObjectIdx ExternalObjectIdx = GetExternalObjectIndex(Object);
+			return ExternalObjectIdx;
+		}
+		else
+		{
+			const FObjectIdx NewObjectIdx = ObjectUniqueIdx + 1;
+			
+			const TSharedRef<FJsonObject> JsonObject = MakeShared<FJsonObject>();
+			ObjectToJsonObject(JsonObject, Object);
+			DynamicJsonObject->SetObjectField(FString::FromInt(NewObjectIdx), JsonObject);
+
+			return NewObjectIdx;
+		}
+	}
+
 	TSharedPtr<FJsonValue> FStructToJson::ConvertObjectToJson(FProperty* Property, const void* Value, const void* Default, bool& bSameValue)
 	{
 		if (FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property))
@@ -1037,94 +1058,129 @@ namespace GameSerializerCore
 		: Outer(Outer)
 	    , RootJsonObject(RootJsonObject)
 	{
-		// 加载ExternalObject
+
+	}
+
+	DECLARE_CYCLE_STAT(TEXT("JsonToStruct_LoadExternalObject"), STAT_JsonToStruct_LoadExternalObject, STATGROUP_GameSerializer);
+	void FJsonToStruct::LoadExternalObject()
+	{
+		GameSerializerStatLog(STAT_JsonToStruct_LoadExternalObject);
+
+		const TSharedPtr<FJsonObject> ExternalObjectJsonObject = RootJsonObject->GetObjectField(ExternalObjectsFieldName);
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : ExternalObjectJsonObject->Values)
 		{
+			const FObjectIdx Idx = -FCString::Atoi(*Pair.Key);
+			ExternalObjectsArray.SetNumUninitialized(Idx + 1);
+
+			const FString SoftObjectPathString = Pair.Value->AsString();
+			const TCHAR* Buffer = *SoftObjectPathString;
+
+			FSoftObjectPath SoftObjectPath;
+			SoftObjectPath.ImportTextItem(Buffer, PPF_None, nullptr, nullptr);
+
 #if WITH_EDITOR
-			if (Outer)
+			TGuardValue<int32> NoneGPlayInEditorIDGuard(GPlayInEditorID, INDEX_NONE);
+#endif
+			UObject* ExternalObject = SoftObjectPath.TryLoad();
+#if WITH_EDITOR
+			if (ExternalObject == nullptr && Outer)
 			{
 				const int32 PIEInstanceID = Outer->GetOutermost()->PIEInstanceID;
 				TGuardValue<int32> GPlayInEditorIDGuard(GPlayInEditorID, PIEInstanceID);
+				ExternalObject = SoftObjectPath.TryLoad();
 			}
 #endif
-			const TSharedPtr<FJsonObject> ExternalObjectJsonObject = RootJsonObject->GetObjectField(ExternalObjectsFieldName);
-			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : ExternalObjectJsonObject->Values)
-			{
-				const FObjectIdx Idx = -FCString::Atoi(*Pair.Key);
-				ExternalObjectsArray.SetNumUninitialized(Idx + 1);
 
-				const FString SoftObjectPathString = Pair.Value->AsString();
-				const TCHAR* Buffer = *SoftObjectPathString;
-
-				FSoftObjectPath SoftObjectPath;
-				SoftObjectPath.ImportTextItem(Buffer, PPF_None, nullptr, nullptr);
-
-				UObject* ExternalObject = SoftObjectPath.TryLoad();
-				ensure(ExternalObject);
-				ExternalObjectsArray[Idx] = ExternalObject;
-			}
+			ensure(ExternalObject);
+			ExternalObjectsArray[Idx] = ExternalObject;
 		}
+	}
 
-		// 实例化Object
+	DECLARE_CYCLE_STAT(TEXT("JsonToStruct_InstanceDynamicObject"), STAT_JsonToStruct_InstanceDynamicObject, STATGROUP_GameSerializer);
+	void FJsonToStruct::InstanceDynamicObject()
+	{
+		GameSerializerStatLog(STAT_JsonToStruct_InstanceDynamicObject);
+
+		const TSharedPtr<FJsonObject> DynamicJsonObject = RootJsonObject->GetObjectField(DynamicObjectsFieldName);
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : DynamicJsonObject->Values)
 		{
-			const TSharedPtr<FJsonObject> DynamicJsonObject = RootJsonObject->GetObjectField(DynamicObjectsFieldName);
-			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : DynamicJsonObject->Values)
-			{
-				const FObjectIdx Idx = FCString::Atoi(*Pair.Key);
-				JsonObjectToInstanceObject(Pair.Value->AsObject().ToSharedRef(), Idx);
-			}
+			const FObjectIdx Idx = FCString::Atoi(*Pair.Key);
+			JsonObjectToInstanceObject(Pair.Value->AsObject().ToSharedRef(), Idx);
 		}
+	}
 
-		// 读取实例化的Object数据
+	DECLARE_CYCLE_STAT(TEXT("JsonToStruct_LoadDynamicObjectJsonData"), STAT_JsonToStruct_LoadDynamicObjectJsonData, STATGROUP_GameSerializer);
+	void FJsonToStruct::LoadDynamicObjectJsonData()
+	{
+		GameSerializerStatLog(STAT_JsonToStruct_LoadDynamicObjectJsonData);
+
+		for (const FInstancedObjectData& InstancedObjectData : InstancedObjectDatas)
 		{
-			const FCustomImportCallback JsonObjectIdxToObject = FCustomImportCallback::CreateLambda([this](const TSharedPtr<FJsonValue>& JsonValue, FProperty* Property, void* OutValue)
-			{
-				if (FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property))
-				{
-					const FObjectIdx ObjectIdx = static_cast<int>(JsonValue->AsNumber());
-					ObjectProperty->SetObjectPropertyValue(OutValue, GetObjectByIdx(ObjectIdx));
-					return true;
-				}
-				return false;
-			});
+			UClass* Class = InstancedObjectData.Object->GetClass();
+			UObject* LoadedObject = InstancedObjectData.Object;
 
-			for (const FInstancedObjectData& InstancedObjectData : InstancedObjectDatas)
-			{
-				UClass* Class = InstancedObjectData.Object->GetClass();
-				UObject* LoadedObject = InstancedObjectData.Object;
+			ensure(JsonToStruct::JsonAttributesToUStructWithContainer(InstancedObjectData.JsonObject->Values, Class, LoadedObject, Class, LoadedObject, CheckFlags, SkipFlags, FCustomImportCallback::CreateRaw(this, &FJsonToStruct::JsonObjectIdxToObject)));
+		}
+	}
 
-				ensure(JsonToStruct::JsonAttributesToUStructWithContainer(InstancedObjectData.JsonObject->Values, Class, LoadedObject, Class, LoadedObject, CheckFlags, SkipFlags, JsonObjectIdxToObject));
-			}
-
-			for (const FInstancedObjectData& InstancedObjectData : InstancedObjectDatas)
+	DECLARE_CYCLE_STAT(TEXT("JsonToStruct_ActorFinishSpawning"), STAT_JsonToStruct_ActorFinishSpawning, STATGROUP_GameSerializer);
+	void FJsonToStruct::DynamicActorFinishSpawning()
+	{
+		GameSerializerStatLog(STAT_JsonToStruct_ActorFinishSpawning);
+		for (AActor* SpawnedActor : SpawnedActors)
+		{
+			if (ensure(SpawnedActor))
 			{
-				UObject* LoadedObject = InstancedObjectData.Object;
-				if (LoadedObject->Implements<UGameSerializerInterface>())
-				{
-					const TSharedPtr<FJsonObject>* ExtendDataJsonObject;
-					if (InstancedObjectData.JsonObject->TryGetObjectField(ExtendDataFieldName, ExtendDataJsonObject))
-					{
-						UScriptStruct* Struct = CastChecked<UScriptStruct>(ExternalObjectsArray[-int32(ExtendDataJsonObject->Get()->GetNumberField(ExtendDataTypeFieldName))]);
-						FGameSerializerExtendData* ExtendData = static_cast<FGameSerializerExtendData*>(FMemory::Malloc(Struct->GetStructureSize()));
-						Struct->InitializeStruct(ExtendData);
-						ensure(JsonToStruct::JsonAttributesToUStructWithContainer(ExtendDataJsonObject->Get()->Values, Struct, ExtendData, Struct, ExtendData, CheckFlags, SkipFlags, JsonObjectIdxToObject));
-						FGameSerializerExtendDataContainer DataContainer;
-						DataContainer.Struct = Struct;
-						DataContainer.ExtendData = MakeShareable(ExtendData);
-						IGameSerializerInterface::WhenGamePostLoad(LoadedObject, DataContainer);
-					}
-					else
-					{
-						IGameSerializerInterface::WhenGamePostLoad(LoadedObject, FGameSerializerExtendDataContainer());
-					}
-				}
-			}
-
-			for (AActor* SpawnedActor : SpawnedActors)
-			{
-				check(SpawnedActor);
 				SpawnedActor->FinishSpawning(SpawnedActor->GetActorTransform());
 			}
 		}
+	}
+
+	DECLARE_CYCLE_STAT(TEXT("JsonToStruct_LoadDynamicObjectExtendData"), STAT_JsonToStruct_LoadDynamicObjectExtendData, STATGROUP_GameSerializer);
+	void FJsonToStruct::LoadDynamicObjectExtendData()
+	{
+		GameSerializerStatLog(STAT_JsonToStruct_LoadDynamicObjectExtendData);
+
+		for (const FInstancedObjectData& InstancedObjectData : InstancedObjectDatas)
+		{
+			UObject* LoadedObject = InstancedObjectData.Object;
+			const TSharedPtr<FJsonObject>* ExtendDataJsonObject;
+			if (InstancedObjectData.JsonObject->TryGetObjectField(ExtendDataFieldName, ExtendDataJsonObject))
+			{
+				UScriptStruct* Struct = CastChecked<UScriptStruct>(ExternalObjectsArray[-int32(ExtendDataJsonObject->Get()->GetNumberField(ExtendDataTypeFieldName))]);
+				FGameSerializerExtendData* ExtendData = static_cast<FGameSerializerExtendData*>(FMemory::Malloc(Struct->GetStructureSize()));
+				Struct->InitializeStruct(ExtendData);
+				ensure(JsonToStruct::JsonAttributesToUStructWithContainer(ExtendDataJsonObject->Get()->Values, Struct, ExtendData, Struct, ExtendData, CheckFlags, SkipFlags, FCustomImportCallback::CreateRaw(this, &FJsonToStruct::JsonObjectIdxToObject)));
+				FGameSerializerExtendDataContainer DataContainer;
+				DataContainer.Struct = Struct;
+				DataContainer.ExtendData = MakeShareable(ExtendData);
+				IGameSerializerInterface::WhenGamePostLoad(LoadedObject, DataContainer);
+			}
+			else
+			{
+				IGameSerializerInterface::WhenGamePostLoad(LoadedObject, FGameSerializerExtendDataContainer());
+			}
+		}
+	}
+
+	DECLARE_CYCLE_STAT(TEXT("JsonToStruct_DynamicActorExecuteConstruction"), STAT_JsonToStruct_DynamicActorExecuteConstruction, STATGROUP_GameSerializer);
+	void FJsonToStruct::DynamicActorExecuteConstruction()
+	{
+		GameSerializerStatLog(STAT_JsonToStruct_DynamicActorExecuteConstruction);
+		for (AActor* SpawnedActor : SpawnedActors)
+		{
+			if (ensure(SpawnedActor))
+			{
+				SpawnedActor->ExecuteConstruction(SpawnedActor->GetActorTransform(), nullptr, nullptr);
+			}
+		}
+	}
+
+	void FJsonToStruct::RetargetDynamicObjectName(const FString& FieldName, const FName& NewName)
+	{
+		const TSharedPtr<FJsonObject>& JsonDynamicObjects = RootJsonObject->GetObjectField(DynamicObjectsFieldName);
+		const TSharedPtr<FJsonObject>& DynamicObject = JsonDynamicObjects->GetObjectField(FString::FromInt(int32(RootJsonObject->GetNumberField(FieldName))));
+		DynamicObject->SetStringField(ObjectNameFieldName, NewName.ToString());
 	}
 
 	TArray<UObject*> FJsonToStruct::GetObjects(const FString& FieldName) const
@@ -1138,6 +1194,11 @@ namespace GameSerializerCore
 		}
 
 		return Res;
+	}
+
+	UObject* FJsonToStruct::GetObject(const FString& FieldName) const
+	{
+		return GetObjectByIdx(int32(RootJsonObject->GetNumberField(FieldName)));
 	}
 
 	UObject* FJsonToStruct::JsonObjectToInstanceObject(const TSharedRef<FJsonObject>& JsonObject, FObjectIdx ObjectIdx)
@@ -1221,6 +1282,17 @@ namespace GameSerializerCore
 			UObject* ExternalObject = ExternalObjectsArray[-ObjectIdx];
 			return ExternalObject;
 		}
+	}
+
+	bool FJsonToStruct::JsonObjectIdxToObject(const TSharedPtr<FJsonValue>& JsonValue, FProperty* Property, void* OutValue)
+	{
+		if (FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property))
+		{
+			const FObjectIdx ObjectIdx = static_cast<int>(JsonValue->AsNumber());
+			ObjectProperty->SetObjectPropertyValue(OutValue, GetObjectByIdx(ObjectIdx));
+			return true;
+		}
+		return false;
 	}
 
 	FString JsonObjectToString(const TSharedRef<FJsonObject>& JsonObject)

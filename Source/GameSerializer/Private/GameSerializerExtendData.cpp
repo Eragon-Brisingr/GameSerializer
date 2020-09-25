@@ -6,10 +6,7 @@
 
 namespace GameSerializerExtendDataFactory
 {
-	TMap<UClass*, TSharedRef<FGameSerializerExtendDataFactory>> Factory = 
-	{
-		{ AActor::StaticClass(), MakeShared<FActorGameSerializerExtendDataFactory>() }
-	};
+	TMap<UClass*, TSharedRef<FGameSerializerExtendDataFactory>> Factory;
 
 	FGameSerializerExtendDataFactory* FindFactory(UObject* Instance)
 	{

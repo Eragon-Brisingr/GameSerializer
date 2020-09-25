@@ -4,17 +4,38 @@
 #include "GameSerializerManager.h"
 #include <PlatformFeatures.h>
 #include <SaveGameSystem.h>
+#include <GameFramework/PlayerState.h>
+#include <GameFramework/GameModeBase.h>
+#include <Engine/LevelStreaming.h>
 
 #include "GameSerializer_Log.h"
 #include "GameSerializerCore.h"
 #include "GameSerializerInterface.h"
 
+namespace JsonFieldName
+{
+	constexpr TCHAR LevelActors[] = TEXT("LevelActors");
+
+	constexpr TCHAR PlayerPawn[] = TEXT("Pawn");
+	constexpr TCHAR PlayerState[] = TEXT("PlayerState");
+	constexpr TCHAR PlayerController[] = TEXT("PlayerController");
+}
 
 void UGameSerializerLevelComponent::OnUnregister()
 {
 	Super::OnUnregister();
 
 	OnLevelRemoved.Execute(GetOwner()->GetLevel());
+}
+
+UGameSerializerLevelStreamingLambda::UGameSerializerLevelStreamingLambda()
+{
+	
+}
+
+void UGameSerializerLevelStreamingLambda::WhenLevelLoaded()
+{
+	OnLevelLoaded.Execute(CastChecked<ULevelStreaming>(GetOuter())->GetLoadedLevel());
 }
 
 UGameSerializerManager::UGameSerializerManager()
@@ -56,13 +77,13 @@ void UGameSerializerManager::Deinitialize()
 	FWorldDelegates::OnPostWorldInitialization.Remove(OnPostWorldInitialization_DelegateHandle);
 }
 
-TOptional<TSharedRef<FJsonObject>> UGameSerializerManager::TryLoadJsonObject(const FName& FileName)
+TOptional<TSharedRef<FJsonObject>> UGameSerializerManager::TryLoadJsonObject(const FString& Category, const FString& FileName)
 {
 	ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
 	if (ensure(SaveSystem))
 	{
 		TArray<uint8> BinaryArray;
-		if (SaveSystem->LoadGame(false, *FileName.ToString(), UserIndex, BinaryArray))
+		if (SaveSystem->LoadGame(false, *FPaths::Combine(Category, FileName), UserIndex, BinaryArray))
 		{
 			BinaryArray.Add(0);
 			const FString JsonString = FString(UTF8_TO_TCHAR(BinaryArray.GetData()));
@@ -76,7 +97,7 @@ TOptional<TSharedRef<FJsonObject>> UGameSerializerManager::TryLoadJsonObject(con
 	return {};
 }
 
-void UGameSerializerManager::SaveJsonObject(const FName& FileName, const TSharedRef<FJsonObject>& JsonObject)
+void UGameSerializerManager::SaveJsonObject(const TSharedRef<FJsonObject>& JsonObject, const FString& Category, const FString& FileName)
 {
 	ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
 	if (ensure(SaveSystem))
@@ -89,7 +110,7 @@ void UGameSerializerManager::SaveJsonObject(const FName& FileName, const TShared
 		BinaryArray.SetNumUninitialized(DataSize);
 		FMemory::Memcpy(BinaryArray.GetData(), UTF8String.Get(), DataSize);
 		
-		SaveSystem->SaveGame(false, *FileName.ToString(), UserIndex, BinaryArray);
+		SaveSystem->SaveGame(false, *FPaths::Combine(Category, FileName), UserIndex, BinaryArray);
 	}
 }
 
@@ -108,8 +129,23 @@ void UGameSerializerManager::InitActorAndComponents(AActor* Actor)
 	}
 }
 
+struct FLevelDeserializer : public GameSerializerCore::FJsonToStruct
+{
+	using Super = FJsonToStruct;
+
+	FLevelDeserializer(ULevel* Level, const TSharedRef<FJsonObject>& RootJsonObject)
+		: Super(Level, RootJsonObject)
+	{
+		CheckFlags = CPF_SaveGame;
+	}
+};
+
+DECLARE_CYCLE_STAT(TEXT("GameSerializerManager_LoadLevel"), STAT_GameSerializerManage_LoadLevel, STATGROUP_GameSerializer);
+DECLARE_CYCLE_STAT(TEXT("GameSerializerManager_InitLevel"), STAT_GameSerializerManage_InitLevel, STATGROUP_GameSerializer);
+DECLARE_CYCLE_STAT(TEXT("GameSerializerManager_LoadStreamLevelEnd"), STAT_GameSerializerManager_LoadStreamLevelEnd, STATGROUP_GameSerializer);
 void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 {
+	const FString LevelName = Level->GetOuter()->GetName();
 	AWorldSettings* WorldSettings = CastChecked<UWorld>(Level->GetOuter())->GetWorldSettings();
 	if (ensure(WorldSettings))
 	{
@@ -117,44 +153,37 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 		WorldSettings->AddOwnedComponent(LevelComponent);
 		LevelComponent->RegisterComponent();
 
-		LevelComponent->OnLevelRemoved.BindWeakLambda(this, [this](ULevel* RemovedLevel)
-		{
-			const FString LevelName = RemovedLevel->GetOuter()->GetName();
-			UE_LOG(GameSerializer_Log, Display, TEXT("保存关卡[%s]"), *LevelName);
-			
-			TArray<UObject*> SerializeList;
-			SerializeList.Reset(RemovedLevel->Actors.Num());
-			for (AActor* Actor : RemovedLevel->Actors)
-			{
-				if (IsValid(Actor) && Actor->Implements<UActorGameSerializerInterface>())
-				{
-					if (IActorGameSerializerInterface::CanGameSerialized(Actor))
-					{
-						SerializeList.Add(Actor);
-					}
-				}
-			}
-
-			GameSerializerCore::FStructToJson StructToJson;
-			StructToJson.AddObjects(TEXT("LevelActors"), SerializeList);
-
-			const TSharedRef<FJsonObject> JsonObject = StructToJson.GetResultJson();
-			SaveJsonObject(*LevelName, JsonObject);
-		});
+		LevelComponent->OnLevelRemoved.BindUObject(this, &UGameSerializerManager::SerializeLevel);
 	}
 
-	const FString LevelName = Level->GetOuter()->GetName();
+	if (TSharedRef<FLevelDeserializer>* StreamLoadedLevelDeserializerPtr = StreamLoadedLevelDataMap.Find(Level))
+	{
+		GameSerializerStatLog(STAT_GameSerializerManage_LoadLevel);
+		
+		UE_LOG(GameSerializer_Log, Display, TEXT("完成流式关卡[%s]加载"), *LevelName);
+		
+		FLevelDeserializer& FLevelDeserializer = StreamLoadedLevelDeserializerPtr->Get();
+		FLevelDeserializer.LoadDynamicObjectExtendData();
+
+		StreamLoadedLevelDataMap.Remove(Level);
+		return;
+	}
+	
 	if (bInvokeLoadGame)
 	{
-		TOptional<TSharedRef<FJsonObject>> JsonObject = TryLoadJsonObject(*LevelName);
+		TOptional<TSharedRef<FJsonObject>> JsonObject = TryLoadJsonObject(TEXT("Levels"), *LevelName);
 		if (JsonObject.IsSet())
 		{
+			FGuardValue_Bitfield(bShouldInitSpawnActor, false);
+
+			GameSerializerStatLog(STAT_GameSerializerManager_LoadStreamLevelEnd);
+			
 			UE_LOG(GameSerializer_Log, Display, TEXT("加载关卡[%s]"), *LevelName);
 			
 			TArray<AActor*> PrepareLoadActors;
 			for (AActor* Actor : Level->Actors)
 			{
-				if (ensure(Actor) && Actor->Implements<UActorGameSerializerInterface>())
+				if (Actor && Actor->Implements<UActorGameSerializerInterface>())
 				{
 					if (IActorGameSerializerInterface::CanGameSerialized(Actor))
 					{
@@ -163,9 +192,9 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 				}
 			}
 
-			GameSerializerCore::FJsonToStruct JsonToStruct(Level, JsonObject.GetValue());
-
-			const TArray<UObject*> LoadedActors = JsonToStruct.GetObjects(TEXT("LevelActors"));
+			FLevelDeserializer LevelDeserializer(Level, JsonObject.GetValue());
+			LevelDeserializer.LoadAllData();
+			const TArray<UObject*> LoadedActors = LevelDeserializer.GetObjects(JsonFieldName::LevelActors);
 			for (AActor* Actor : PrepareLoadActors)
 			{
 				if (IsValid(Actor))
@@ -180,20 +209,87 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 		}
 	}
 
-	UE_LOG(GameSerializer_Log, Display, TEXT("初始化关卡[%s]"), *LevelName);
-	for (int32 Idx = 0; Idx < Level->Actors.Num(); ++Idx)
 	{
-		AActor* Actor = Level->Actors[Idx];
-		if (ensure(IsValid(Actor)))
+		GameSerializerStatLog(STAT_GameSerializerManage_InitLevel);
+		
+		UE_LOG(GameSerializer_Log, Display, TEXT("初始化关卡[%s]"), *LevelName);
+		for (int32 Idx = 0; Idx < Level->Actors.Num(); ++Idx)
 		{
-			InitActorAndComponents(Actor);
+			AActor* Actor = Level->Actors[Idx];
+			if (ensure(IsValid(Actor)))
+			{
+				InitActorAndComponents(Actor);
+			}
 		}
 	}
 }
 
+DECLARE_CYCLE_STAT(TEXT("GameSerializerManager_LoadStreamLevelStart"), STAT_GameSerializerManager_LoadStreamLevelStart, STATGROUP_GameSerializer);
+DECLARE_CYCLE_STAT(TEXT("GameSerializerManager_LoadOrInitWorld"), STAT_GameSerializerManage_LoadOrInitWorld, STATGROUP_GameSerializer);
 void UGameSerializerManager::LoadOrInitWorld(UWorld* World)
 {
+	GameSerializerStatLog(STAT_GameSerializerManage_LoadOrInitWorld);
+	
 	UE_LOG(GameSerializer_Log, Display, TEXT("世界[%s]启动游戏序列化系统"), *World->GetName());
+
+	const TArray<ULevelStreaming*>& StreamingLevels = World->GetStreamingLevels();
+	CachedLevelStreamingLambdas.Reset(StreamingLevels.Num());
+	for (ULevelStreaming* LevelStreaming : StreamingLevels)
+	{
+		if (ensure(LevelStreaming))
+		{
+			UGameSerializerLevelStreamingLambda* LevelStreamingLambda = NewObject<UGameSerializerLevelStreamingLambda>(LevelStreaming);
+			CachedLevelStreamingLambdas.Add(LevelStreamingLambda);
+			LevelStreaming->OnLevelLoaded.AddDynamic(LevelStreamingLambda, &UGameSerializerLevelStreamingLambda::WhenLevelLoaded);
+			LevelStreamingLambda->OnLevelLoaded.BindWeakLambda(this, [this](ULevel* LoadedLevel)
+			{
+				const FString LevelName = LoadedLevel->GetOuter()->GetName();
+				if (bInvokeLoadGame)
+				{
+					TOptional<TSharedRef<FJsonObject>> JsonObject = TryLoadJsonObject(TEXT("Levels"), *LevelName);
+					if (JsonObject.IsSet())
+					{
+						FGuardValue_Bitfield(bShouldInitSpawnActor, false);
+
+						GameSerializerStatLog(STAT_GameSerializerManager_LoadStreamLevelStart);
+
+						UE_LOG(GameSerializer_Log, Display, TEXT("加载流式关卡[%s]"), *LoadedLevel->GetOuter()->GetName());
+
+						TArray<AActor*> PrepareLoadActors;
+						for (AActor* Actor : LoadedLevel->Actors)
+						{
+							if (Actor && Actor->Implements<UActorGameSerializerInterface>())
+							{
+								if (IActorGameSerializerInterface::CanGameSerialized(Actor))
+								{
+									PrepareLoadActors.Add(Actor);
+								}
+							}
+						}
+
+						TSharedRef<FLevelDeserializer> LevelDeserializer = MakeShared<FLevelDeserializer>(LoadedLevel, JsonObject.GetValue());
+						LevelDeserializer->LoadExternalObject();
+						LevelDeserializer->InstanceDynamicObject();
+						LevelDeserializer->DynamicActorExecuteConstruction();
+						LevelDeserializer->LoadDynamicObjectJsonData();
+						
+						const TArray<UObject*> LoadedActors = LevelDeserializer->GetObjects(JsonFieldName::LevelActors);
+						for (AActor* Actor : PrepareLoadActors)
+						{
+							if (IsValid(Actor))
+							{
+								if (LoadedActors.Contains(Actor) == false)
+								{
+									Actor->Destroy();
+								}
+							}
+						}
+						StreamLoadedLevelDataMap.Add(LoadedLevel, LevelDeserializer);
+					}
+				}
+			});
+		}
+	}
 
 	for (ULevel* Level : World->GetLevels())
 	{
@@ -201,4 +297,116 @@ void UGameSerializerManager::LoadOrInitWorld(UWorld* World)
 	}
 
 	World->AddOnActorSpawnedHandler(FOnActorSpawned::FDelegate::CreateUObject(this, &UGameSerializerManager::InitActorAndComponents));
+}
+
+void UGameSerializerManager::SerializeLevel(ULevel* Level)
+{
+	const FString LevelName = Level->GetOuter()->GetName();
+	UE_LOG(GameSerializer_Log, Display, TEXT("保存关卡[%s]"), *LevelName);
+
+	TArray<UObject*> SerializeList;
+	SerializeList.Reset(Level->Actors.Num());
+	for (AActor* Actor : Level->Actors)
+	{
+		if (IsValid(Actor) && Actor->Implements<UActorGameSerializerInterface>())
+		{
+			if (IActorGameSerializerInterface::CanGameSerialized(Actor))
+			{
+				SerializeList.Add(Actor);
+			}
+		}
+	}
+
+	struct FLevelSerializer : public GameSerializerCore::FStructToJson
+	{
+		FLevelSerializer()
+		{
+			CheckFlags = CPF_SaveGame;
+		}
+	};
+
+	FLevelSerializer LevelSerializer;
+	LevelSerializer.AddObjects(JsonFieldName::LevelActors, SerializeList);
+
+	const TSharedRef<FJsonObject> JsonObject = LevelSerializer.GetResultJson();
+	SaveJsonObject(JsonObject, TEXT("Levels"), *LevelName);
+}
+
+APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, AController* NewPlayer, const FTransform& SpawnTransform)
+{
+	UWorld* World = GameMode->GetWorld();
+	check(World);
+
+	APlayerState* PlayerState = NewPlayer->GetPlayerState<APlayerState>();
+	check(PlayerState);
+
+	const FString PlayerName = PlayerState->GetPlayerName();
+
+	UE_LOG(GameSerializer_Log, Display, TEXT("玩家[%s]启动游戏序列化系统"), *PlayerName);
+	
+	FActorSpawnParameters SpawnInfo;
+	SpawnInfo.Name = *PlayerName;
+	SpawnInfo.Instigator = GameMode->GetInstigator();
+	SpawnInfo.ObjectFlags |= RF_Transient;	// We never want to save default player pawns into a map
+	UClass* PawnClass = GameMode->GetDefaultPawnClassForController(NewPlayer);
+	APawn* Pawn = World->SpawnActor<APawn>(PawnClass, SpawnTransform, SpawnInfo);
+
+	APlayerController* PlayerController = Cast<APlayerController>(NewPlayer);
+	if (ensure(PlayerController))
+	{
+		FPlayerData PlayerData;
+		PlayerData.PlayerController = PlayerController;
+		PlayerData.PlayerState = PlayerState;
+		PlayerDataMap.Add(Pawn, PlayerData);
+		Pawn->OnEndPlay.AddDynamic(this, &UGameSerializerManager::OnPlayerPawnEndPlay);
+	}
+	
+	if (bInvokeLoadGame)
+	{
+		TOptional<TSharedRef<FJsonObject>> JsonObject = TryLoadJsonObject(TEXT("Players"), *PlayerName);
+		if (JsonObject.IsSet())
+		{
+			const TSharedRef<FJsonObject> RootJsonObject = JsonObject.GetValue();
+
+			struct FPlayerDeserializer : public GameSerializerCore::FJsonToStruct
+			{
+				using Super = FJsonToStruct;
+
+				FPlayerDeserializer(ULevel* Level, const TSharedRef<FJsonObject>& RootJsonObject)
+					: Super(Level, RootJsonObject)
+				{
+					CheckFlags = CPF_SaveGame;
+				}
+			};
+			FPlayerDeserializer PlayerDeserializer(World->PersistentLevel, RootJsonObject);
+
+			PlayerDeserializer.RetargetDynamicObjectName(JsonFieldName::PlayerController, PlayerController->GetFName());
+			PlayerDeserializer.RetargetDynamicObjectName(JsonFieldName::PlayerState, PlayerState->GetFName());
+			PlayerDeserializer.RetargetDynamicObjectName(JsonFieldName::PlayerPawn, Pawn->GetFName());
+			
+			PlayerDeserializer.LoadAllData();
+		}
+	}
+	
+	return Pawn;
+}
+
+void UGameSerializerManager::OnPlayerPawnEndPlay(AActor* PawnActor, EEndPlayReason::Type EndPlayReason)
+{
+	APawn* Pawn = CastChecked<APawn>(PawnActor);
+	const FPlayerData PlayerData = PlayerDataMap.FindAndRemoveChecked(Pawn);
+
+	struct FPlayerSerializer : public GameSerializerCore::FStructToJson
+	{
+		FPlayerSerializer()
+		{
+			CheckFlags = CPF_SaveGame;
+		}
+	};
+	FPlayerSerializer PlayerSerializer;
+	PlayerSerializer.AddObject(JsonFieldName::PlayerController, PlayerData.PlayerController.Get(true));
+	PlayerSerializer.AddObject(JsonFieldName::PlayerState, PlayerData.PlayerState.Get(true));
+	PlayerSerializer.AddObject(JsonFieldName::PlayerPawn, Pawn);
+
+	SaveJsonObject(PlayerSerializer.GetResultJson(), TEXT("Players"), *Pawn->GetName());
 }
