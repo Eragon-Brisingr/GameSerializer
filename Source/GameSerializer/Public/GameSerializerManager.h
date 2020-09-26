@@ -42,7 +42,7 @@ class GAMESERIALIZER_API UGameSerializerManager : public UGameInstanceSubsystem
 	GENERATED_BODY()
 public:
 	UGameSerializerManager();
-	
+
 	void Initialize(FSubsystemCollectionBase& Collection) override;
 	void Deinitialize() override;
 protected:
@@ -56,11 +56,27 @@ protected:
 	void LoadOrInitWorld(UWorld* World);
 
 	void SerializeLevel(ULevel* Level);
+public:
+	void WhenLevelInited(ULevel* Level) { OnLevelInitedNative.Broadcast(Level); }
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnLevelInitedNative, ULevel*);
+	FOnLevelInitedNative OnLevelInitedNative;
+
+	void WhenLevelLoaded(ULevel* Level) { OnLevelLoadedNative.Broadcast(Level); }
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnLevelLoadedNative, ULevel*);
+	FOnLevelLoadedNative OnLevelLoadedNative;
+
+	void WhenLevelPreSave(ULevel* Level) { OnLevelPreSaveNative.Broadcast(Level); }
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnLevelPreSaveNative, ULevel*);
+	FOnLevelPreSaveNative OnLevelPreSaveNative;
 private:
-	FDelegateHandle OnPostWorldInitialization_DelegateHandle;
+	FDelegateHandle OnGameModeInitialized_DelegateHandle;
 	FDelegateHandle OnLevelAdd_DelegateHandle;
 	uint8 bInvokeLoadGame : 1;
 	uint8 bShouldInitSpawnActor : 1;
+
+#if DO_CHECK
+	TArray<TWeakObjectPtr<ULevel>> LoadedLevels;
+#endif
 
 	TMap<TWeakObjectPtr<ULevel>, TSharedRef<struct FLevelDeserializer>> StreamLoadedLevelDataMap;
 	UPROPERTY(Transient)
