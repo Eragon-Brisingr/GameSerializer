@@ -5,6 +5,8 @@
 #include <JsonObjectWrapper.h>
 #include <Internationalization/Culture.h>
 #include <Misc/ScopeExit.h>
+#include <Engine/SimpleConstructionScript.h>
+#include <Engine/SCS_Node.h>
 
 #include "GameSerializerInterface.h"
 #include "GameSerializer_Log.h"
@@ -125,6 +127,10 @@ namespace CustomJsonConverter
 					DefaultValueHelper = FScriptArrayHelper(ArrayProperty, DefaultValue);
 					bSameValue = Helper.Num() == DefaultValueHelper->Num();
 				}
+				else
+				{
+					bSameValue = true;
+				}
 				for (int32 i = 0, n = Helper.Num(); i < n; ++i)
 				{
 					const bool IsValidDefaultValueIdx = DefaultValue ? DefaultValueHelper->IsValidIndex(i) : false;
@@ -149,6 +155,10 @@ namespace CustomJsonConverter
 				{
 					DefaultValueHelper = FScriptSetHelper(SetProperty, DefaultValue);
 					bSameValue = Helper.Num() == DefaultValueHelper->Num();
+				}
+				else
+				{
+					bSameValue = true;
 				}
 				for (int32 i = 0, n = Helper.Num(); n; ++i)
 				{
@@ -180,6 +190,10 @@ namespace CustomJsonConverter
 				{
 					DefaultValueHelper = FScriptMapHelper(MapProperty, DefaultValue);
 					bSameValue = Helper.Num() == DefaultValueHelper->Num();
+				}
+				else
+				{
+					bSameValue = true;
 				}
 				for (int32 i = 0, n = Helper.Num(); n; ++i)
 				{
@@ -235,7 +249,7 @@ namespace CustomJsonConverter
 			{
 				// Default to export as string for everything else
 				FString StringValue;
-				Property->ExportTextItem(StringValue, Value, nullptr, nullptr, PPF_None);
+				Property->ExportTextItem(StringValue, Value, DefaultValue, nullptr, PPF_None);
 				return MakeShared<FJsonValueString>(StringValue);
 			}
 
@@ -250,6 +264,7 @@ namespace CustomJsonConverter
 				return ConvertScalarFPropertyToJsonValue(Property, Value, DefaultValue, bSameValue, CheckFlags, SkipFlags, ExportCb);
 			}
 
+			bSameValue = true;
 			TArray< TSharedPtr<FJsonValue> > Array;
 			for (int Index = 0; Index != Property->ArrayDim; ++Index)
 			{
@@ -290,6 +305,7 @@ namespace CustomJsonConverter
 				return true;
 			}
 
+			bSameValue = true;
 			for (TFieldIterator<FProperty> It(StructDefinition); It; ++It)
 			{
 				FProperty* Property = *It;
@@ -854,6 +870,7 @@ namespace GameSerializerCore
 		constexpr TCHAR ObjectClassFieldName[] = TEXT("__Class");
 		constexpr TCHAR ExtendDataFieldName[] = TEXT("__ExtendData");
 		constexpr TCHAR ExtendDataTypeFieldName[] = TEXT("__Type");
+		constexpr TCHAR ActorTransformFieldName[] = TEXT("__ActorTransform");
 	}
 	
 	using namespace CustomJsonConverter;
@@ -883,17 +900,6 @@ namespace GameSerializerCore
 		check(Object);
 
 		RootJsonObject->SetNumberField(FieldName, ConvertObjectToObjectIdx(Object));
-	}
-
-	void FStructToJson::AddStruct(const FString& FieldName, UScriptStruct* Struct, const void* Value, const void* DefaultValue)
-	{
-		const TSharedRef<FJsonObject> JsonObject = MakeShared<FJsonObject>();
-		bool bSameValue;
-		ensure(StructToJson::UStructToJsonAttributes(Struct, Value, DefaultValue, bSameValue, JsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
-		if (bSameValue == false)
-		{
-			RootJsonObject->SetObjectField(FieldName, JsonObject);
-		}
 	}
 
 	FObjectIdx FStructToJson::GetExternalObjectIndex(const UObject* ExternalObject)
@@ -939,6 +945,11 @@ namespace GameSerializerCore
 		JsonObject->SetStringField(ObjectNameFieldName, Object->GetName());
 		JsonObject->SetNumberField(ObjectClassFieldName, GetExternalObjectIndex(Class));
 
+		if (AActor* Actor = Cast<AActor>(Object))
+		{
+			AddStruct(JsonObject, ActorTransformFieldName, Actor->GetActorTransform());
+		}
+		
 		const FGameSerializerExtendDataContainer ExtendDataContainer = IGameSerializerInterface::WhenGamePreSave(Object);
 		if (ExtendDataContainer.Struct && ensure(ExtendDataContainer.ExtendData.IsValid()))
 		{
@@ -1057,6 +1068,17 @@ namespace GameSerializerCore
 		return nullptr;
 	}
 
+	void FStructToJson::AddStruct(const TSharedRef<FJsonObject>& JsonObject, const FString& FieldName, UScriptStruct* Struct, const void* Value, const void* DefaultValue)
+	{
+		const TSharedRef<FJsonObject> StructJsonObject = MakeShared<FJsonObject>();
+		bool bSameValue;
+		ensure(StructToJson::UStructToJsonAttributes(Struct, Value, DefaultValue, bSameValue, StructJsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
+		if (bSameValue == false)
+		{
+			JsonObject->SetObjectField(FieldName, StructJsonObject);
+		}
+	}
+
 	FJsonToStruct::FJsonToStruct(UObject* Outer, const TSharedRef<FJsonObject>& RootJsonObject)
 		: Outer(Outer)
 	    , RootJsonObject(RootJsonObject)
@@ -1130,16 +1152,27 @@ namespace GameSerializerCore
 	void FJsonToStruct::DynamicActorFinishSpawning()
 	{
 		GameSerializerStatLog(STAT_JsonToStruct_ActorFinishSpawning);
-		for (AActor* SpawnedActor : SpawnedActors)
+		for (FSpawnedActorData& SpawnedActorData : SpawnedActors)
 		{
+			AActor* SpawnedActor = SpawnedActorData.SpawnedActor.Get();
 			if (ensure(SpawnedActor))
 			{
-				SpawnedActor->FinishSpawning(SpawnedActor->GetActorTransform());
+				if (UBlueprintGeneratedClass* BPGC = Cast<UBlueprintGeneratedClass>(SpawnedActor->GetClass()))
+				{
+					// SimpleConstructionScript已经执行过了，跳过
+					TGuardValue<USimpleConstructionScript*> SimpleConstructionScriptGuard(BPGC->SimpleConstructionScript, nullptr);
+					SpawnedActor->FinishSpawning(SpawnedActor->GetActorTransform());
+				}
+				else
+				{
+					SpawnedActor->FinishSpawning(SpawnedActor->GetActorTransform());
+				}
 			}
 		}
 	}
 
-	DECLARE_CYCLE_STAT(TEXT("JsonToStruct_LoadDynamicObjectExtendData"), STAT_JsonToStruct_LoadDynamicObjectExtendData, STATGROUP_GameSerializer);
+	DECLARE_CYCLE_STAT(TEXT("JsonToStruct_LoadDynamicObjectExtendData"), STAT_JsonToStruct_LoadDynamicObjectExtendData,
+	                   STATGROUP_GameSerializer);
 	void FJsonToStruct::LoadDynamicObjectExtendData()
 	{
 		GameSerializerStatLog(STAT_JsonToStruct_LoadDynamicObjectExtendData);
@@ -1162,19 +1195,6 @@ namespace GameSerializerCore
 			else
 			{
 				IGameSerializerInterface::WhenGamePostLoad(LoadedObject, FGameSerializerExtendDataContainer());
-			}
-		}
-	}
-
-	DECLARE_CYCLE_STAT(TEXT("JsonToStruct_DynamicActorExecuteConstruction"), STAT_JsonToStruct_DynamicActorExecuteConstruction, STATGROUP_GameSerializer);
-	void FJsonToStruct::DynamicActorExecuteConstruction()
-	{
-		GameSerializerStatLog(STAT_JsonToStruct_DynamicActorExecuteConstruction);
-		for (AActor* SpawnedActor : SpawnedActors)
-		{
-			if (ensure(SpawnedActor))
-			{
-				SpawnedActor->ExecuteConstruction(SpawnedActor->GetActorTransform(), nullptr, nullptr);
 			}
 		}
 	}
@@ -1204,16 +1224,6 @@ namespace GameSerializerCore
 		return GetObjectByIdx(int32(RootJsonObject->GetNumberField(FieldName)));
 	}
 
-	void FJsonToStruct::GetStruct(const FString& FieldName, UScriptStruct* Struct, void* Value)
-	{
-		const TSharedPtr<FJsonObject>* StructJsonObjectPtr;
-		if (RootJsonObject->TryGetObjectField(FieldName, StructJsonObjectPtr))
-		{
-			const TSharedPtr<FJsonObject>& StructJsonObject = *StructJsonObjectPtr;
-			ensure(JsonToStruct::JsonAttributesToUStructWithContainer(StructJsonObject->Values, Struct, Value, Struct, Value, CheckFlags, SkipFlags, FCustomImportCallback::CreateRaw(this, &FJsonToStruct::JsonObjectIdxToObject)));
-		}
-	}
-
 	UObject* FJsonToStruct::JsonObjectToInstanceObject(const TSharedRef<FJsonObject>& JsonObject, FObjectIdx ObjectIdx)
 	{
 		const FString ObjectName = JsonObject->GetStringField(ObjectNameFieldName);
@@ -1230,6 +1240,12 @@ namespace GameSerializerCore
 		if (Object)
 		{
 			ensure(Object->IsA(ObjectClass));
+			if (AActor* Actor = Cast<AActor>(Object))
+			{
+				FTransform ActorTransform = GetStruct<FTransform>(ActorTransformFieldName);
+				ActorTransform.AddToTranslation(FVector(FActorGameSerializerExtendData::WorldOffset));
+				Actor->SetActorTransform(ActorTransform);
+			}
 		}
 		else
 		{
@@ -1237,13 +1253,166 @@ namespace GameSerializerCore
 			{
 				ULevel* Level = CastChecked<ULevel>(Outer);
 
+				FTransform ActorTransform = GetStruct<FTransform>(JsonObject, ActorTransformFieldName);
+				ActorTransform.AddToTranslation(FVector(FActorGameSerializerExtendData::WorldOffset));
+				
 				FActorSpawnParameters ActorSpawnParameters;
 				ActorSpawnParameters.OverrideLevel = Level;
 				ActorSpawnParameters.bDeferConstruction = true;
 				ActorSpawnParameters.Name = *ObjectName;
 
-				AActor* Actor = Level->GetWorld()->SpawnActor<AActor>(ObjectClass, ActorSpawnParameters);
-				SpawnedActors.Add(Actor);
+				UWorld* World = Level->GetWorld();
+				AActor* Actor = World->SpawnActor<AActor>(ObjectClass, ActorTransform, ActorSpawnParameters);
+				FSpawnedActorData& SpawnedActorData = SpawnedActors.AddDefaulted_GetRef();
+				SpawnedActorData.SpawnedActor = Actor;
+
+				// Spawn的蓝图Actor需要优先构造Component
+				if (UBlueprintGeneratedClass* ActualBPGC = Cast<UBlueprintGeneratedClass>(ObjectClass))
+				{
+					TArray<const UBlueprintGeneratedClass*> ParentBPClassStack;
+					const bool bErrorFree = UBlueprintGeneratedClass::GetGeneratedClassesHierarchy(ActualBPGC, ParentBPClassStack);
+					if (bErrorFree)
+					{
+						FGuardValue_Bitfield(World->bIsRunningConstructionScript, true);
+						for (int32 i = ParentBPClassStack.Num() - 1; i >= 0; i--)
+						{
+							const UBlueprintGeneratedClass* CurrentBPGClass = ParentBPClassStack[i];
+							check(CurrentBPGClass);
+							USimpleConstructionScript* SCS = CurrentBPGClass->SimpleConstructionScript;
+							if (SCS)
+							{
+								// 参见
+								// USimpleConstructionScript::ExecuteScriptOnActor
+								// USCS_Node::ExecuteNodeOnActor
+								// 取消了组件注册的流程
+								struct FSCS_NodeInstanceComponent
+								{
+									static UActorComponent* ExecuteNodeOnActor(USCS_Node* RootNode, AActor* Actor, USceneComponent* ParentComponent, const FTransform* RootTransform, const FRotationConversionCache* RootRelativeRotationCache, bool bIsDefaultTransform)
+									{
+										const FName InternalVariableName = RootNode->GetVariableName();
+										
+										check(Actor != nullptr);
+										check((ParentComponent != nullptr && !ParentComponent->IsPendingKill()) || (RootTransform != nullptr)); // must specify either a parent component or a world transform
+
+										// Create a new component instance based on the template
+										UActorComponent* NewActorComp = nullptr;
+										UBlueprintGeneratedClass* ActualBPGC = CastChecked<UBlueprintGeneratedClass>(Actor->GetClass());
+										const FBlueprintCookedComponentInstancingData* ActualComponentTemplateData = ActualBPGC->UseFastPathComponentInstancing() ? RootNode->GetActualComponentTemplateData(ActualBPGC) : nullptr;
+										if (ActualComponentTemplateData && ActualComponentTemplateData->bHasValidCookedData
+											&& ensureMsgf(ActualComponentTemplateData->ComponentTemplateClass != nullptr, TEXT("SCS fast path (%s.%s): Cooked data is valid, but runtime support data is not initialized. Using the slow path instead."), *ActualBPGC->GetName(), *InternalVariableName.ToString()))
+										{
+											// Use cooked instancing data if valid (fast path).
+											NewActorComp = Actor->CreateComponentFromTemplateData(ActualComponentTemplateData, InternalVariableName);
+										}
+										else if (UActorComponent* ActualComponentTemplate = RootNode->GetActualComponentTemplate(ActualBPGC))
+										{
+											NewActorComp = Actor->CreateComponentFromTemplate(ActualComponentTemplate, InternalVariableName);
+										}
+
+										if (NewActorComp != nullptr)
+										{
+											NewActorComp->CreationMethod = EComponentCreationMethod::SimpleConstructionScript;
+
+											// SCS created components are net addressable
+											NewActorComp->SetNetAddressable();
+
+											if (!NewActorComp->HasBeenCreated())
+											{
+												// Call function to notify component it has been created
+												NewActorComp->OnComponentCreated();
+											}
+
+											// Special handling for scene components
+											USceneComponent* NewSceneComp = Cast<USceneComponent>(NewActorComp);
+											if (NewSceneComp != nullptr)
+											{
+												// If NULL is passed in, we are the root, so set transform and assign as RootComponent on Actor, similarly if the 
+												// NewSceneComp is the ParentComponent then we are the root component. This happens when the root component is recycled
+												// by StaticAllocateObject.
+												if (ParentComponent == nullptr || (ParentComponent && ParentComponent->IsPendingKill()) || ParentComponent == NewSceneComp)
+												{
+													FTransform WorldTransform = *RootTransform;
+													if (bIsDefaultTransform)
+													{
+														// Note: We use the scale vector from the component template when spawning (to match what happens with a native root). This
+														// does NOT occur when this component is instanced as part of dynamically spawning a Blueprint class in a cooked build (i.e.
+														// 'bIsDefaultTransform' will be 'false' in that situation). In order to maintain the same behavior between a nativized and
+														// non-nativized cooked build, if this ever changes, we would also need to update the code in AActor::PostSpawnInitialize().
+														WorldTransform.SetScale3D(NewSceneComp->GetRelativeScale3D());
+													}
+
+													if (RootRelativeRotationCache)
+													{	// Enforces using the same rotator as much as possible.
+														NewSceneComp->SetRelativeRotationCache(*RootRelativeRotationCache);
+													}
+
+													NewSceneComp->SetWorldTransform(WorldTransform);
+													Actor->SetRootComponent(NewSceneComp);
+												}
+												// Otherwise, attach to parent component passed in
+												else
+												{
+													NewSceneComp->SetupAttachment(ParentComponent, RootNode->AttachToName);
+												}
+											}
+
+											// If we want to save this to a property, do it here
+											FName VarName = InternalVariableName;
+											if (VarName != NAME_None)
+											{
+												UClass* ActorClass = Actor->GetClass();
+												if (FObjectPropertyBase* Prop = FindFProperty<FObjectPropertyBase>(ActorClass, VarName))
+												{
+													// If it is null we don't really know what's going on, but make it behave as it did before the bug fix
+													if (Prop->PropertyClass == nullptr || NewActorComp->IsA(Prop->PropertyClass))
+													{
+														Prop->SetObjectPropertyValue_InContainer(Actor, NewActorComp);
+													}
+													else
+													{
+														UE_LOG(LogBlueprint, Log, TEXT("ExecuteNodeOnActor: Property '%s' on '%s' is of type '%s'. Could not assign '%s' to it."), *VarName.ToString(), *Actor->GetName(), *Prop->PropertyClass->GetName(), *NewActorComp->GetName());
+													}
+												}
+												else
+												{
+													UE_LOG(LogBlueprint, Log, TEXT("ExecuteNodeOnActor: Couldn't find property '%s' on '%s'"), *VarName.ToString(), *Actor->GetName());
+#if WITH_EDITOR
+													// If we're constructing editable components in the SCS editor, set the component instance corresponding to this node for editing purposes
+													USimpleConstructionScript* SCS = RootNode->GetSCS();
+													if (SCS != nullptr && (SCS->IsConstructingEditorComponents() || SCS->GetComponentEditorActorInstance() == Actor))
+													{
+														RootNode->EditorComponentInstance = NewSceneComp;
+													}
+#endif
+												}
+											}
+
+											// Determine the parent component for our children (it's still our parent if we're a non-scene component)
+											USceneComponent* ParentSceneComponentOfChildren = (NewSceneComp != nullptr) ? NewSceneComp : ParentComponent;
+
+											// If we made a component, go ahead and process our children
+											for (int32 NodeIdx = 0; NodeIdx < RootNode->ChildNodes.Num(); NodeIdx++)
+											{
+												USCS_Node* Node = RootNode->ChildNodes[NodeIdx];
+												check(Node != nullptr);
+												ExecuteNodeOnActor(Node, Actor, ParentSceneComponentOfChildren, nullptr, nullptr, false);
+											}
+										}
+
+										return NewActorComp;
+									}
+								};
+
+								const TArray<USCS_Node*>& Nodes = SCS->GetRootNodes();
+								for (USCS_Node* Node : Nodes)
+								{
+									FSCS_NodeInstanceComponent::ExecuteNodeOnActor(Node, Actor, nullptr, &ActorTransform, nullptr, false);
+								}
+							}
+						}
+					}
+				}
+				
 				Object = Actor;
 			}
 			else if (ObjectClass->IsChildOf<UActorComponent>())
@@ -1306,6 +1475,16 @@ namespace GameSerializerCore
 			return true;
 		}
 		return false;
+	}
+
+	void FJsonToStruct::GetStruct(const TSharedRef<FJsonObject>& JsonObject, const FString& FieldName, UScriptStruct* Struct, void* Value)
+	{
+		const TSharedPtr<FJsonObject>* StructJsonObjectPtr;
+		if (JsonObject->TryGetObjectField(FieldName, StructJsonObjectPtr))
+		{
+			const TSharedPtr<FJsonObject>& StructJsonObject = *StructJsonObjectPtr;
+			ensure(JsonToStruct::JsonAttributesToUStructWithContainer(StructJsonObject->Values, Struct, Value, Struct, Value, CheckFlags, SkipFlags, FCustomImportCallback::CreateRaw(this, &FJsonToStruct::JsonObjectIdxToObject)));
+		}
 	}
 
 	FString JsonObjectToString(const TSharedRef<FJsonObject>& JsonObject)

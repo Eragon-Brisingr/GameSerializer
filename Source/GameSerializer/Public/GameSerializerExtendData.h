@@ -83,15 +83,6 @@ struct GAMESERIALIZER_API FActorGameSerializerExtendData : public FGameSerialize
 {
 	GENERATED_BODY()
 public:
-	UPROPERTY(SaveGame)
-	FVector Location;
-
-	UPROPERTY(SaveGame)
-	FRotator Rotation;
-
-	UPROPERTY(SaveGame)
-	FVector Scale3D = FVector::OneVector;
-
 	static FIntVector WorldOffset;
 };
 

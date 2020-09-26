@@ -27,12 +27,11 @@ namespace GameSerializerCore
 		void AddObjects(const FString& FieldName, TArray<UObject*> Objects);
 		void AddObject(const FString& FieldName, UObject* Object);
 
-		void AddStruct(const FString& FieldName, UScriptStruct* Struct, const void* Value, const void* DefaultValue);
+		void AddStruct(const FString& FieldName, UScriptStruct* Struct, const void* Value, const void* DefaultValue) { AddStruct(RootJsonObject, FieldName, Struct, Value, DefaultValue); }
 		template<typename T>
 		void AddStruct(const FString& FieldName, const T& Value)
 		{
-			const T DefaultValue{};
-			AddStruct(FieldName, TBaseStructure<T>::Get(), &Value, &DefaultValue);
+			AddStruct<T>(RootJsonObject, FieldName, Value);
 		}
 
 		const TSharedRef<FJsonObject>& GetResultJson() const { return RootJsonObject; }
@@ -64,6 +63,14 @@ namespace GameSerializerCore
 
 		FObjectIdx ConvertObjectToObjectIdx(UObject* Object);
 		TSharedPtr<FJsonValue> ConvertObjectToJson(FProperty* Property, const void* Value, const void* Default, bool& bSameValue);
+
+		void AddStruct(const TSharedRef<FJsonObject>& JsonObject, const FString& FieldName, UScriptStruct* Struct, const void* Value, const void* DefaultValue);
+		template<typename T>
+		void AddStruct(const TSharedRef<FJsonObject>& JsonObject, const FString& FieldName, const T& Value)
+		{
+			const static T DefaultValue{};
+			AddStruct(JsonObject, FieldName, TBaseStructure<T>::Get(), &Value, &DefaultValue);
+		}
 	};
 
 	struct FJsonToStruct
@@ -73,7 +80,7 @@ namespace GameSerializerCore
 		
 		FJsonToStruct(UObject* Outer, const TSharedRef<FJsonObject>& RootJsonObject);
 
-		void LoadAllData() { LoadExternalObject(); InstanceDynamicObject(); LoadDynamicObjectJsonData(); DynamicActorFinishSpawning(); LoadDynamicObjectExtendData(); }
+		void LoadAllDataImmediately() { LoadExternalObject(); InstanceDynamicObject(); LoadDynamicObjectJsonData(); DynamicActorFinishSpawning(); LoadDynamicObjectExtendData(); }
 		
 		void LoadExternalObject();
 		void InstanceDynamicObject();
@@ -81,20 +88,16 @@ namespace GameSerializerCore
 		void DynamicActorFinishSpawning();
 		void LoadDynamicObjectExtendData();
 
-		void DynamicActorExecuteConstruction();
-		
 		void RetargetDynamicObjectName(const FString& FieldName, const FName& NewName);
 		
 		TArray<UObject*> GetObjects(const FString& FieldName) const;
 		UObject* GetObject(const FString& FieldName) const;
 
-		void GetStruct(const FString& FieldName, UScriptStruct* Struct, void* Value);
+		void GetStruct(const FString& FieldName, UScriptStruct* Struct, void* Value) { GetStruct(RootJsonObject, FieldName, Struct, Value); }
 		template<typename T>
 		T GetStruct(const FString& FieldName)
 		{
-			T Value{};
-			GetStruct(FieldName, TBaseStructure<T>::Get(), &Value);
-			return Value;
+			return GetStruct<T>(RootJsonObject, FieldName);
 		}
 	private:
 		UObject* JsonObjectToInstanceObject(const TSharedRef<FJsonObject>& JsonObject, FObjectIdx ObjectIdx);
@@ -106,7 +109,11 @@ namespace GameSerializerCore
 		TArray<UObject*> ExternalObjectsArray = { nullptr };
 		TArray<UObject*> ObjectsArray = { nullptr };
 
-		TArray<AActor*> SpawnedActors;
+		struct FSpawnedActorData
+		{
+			TWeakObjectPtr<AActor> SpawnedActor;
+		};
+		TArray<FSpawnedActorData> SpawnedActors;
 
 		struct FInstancedObjectData
 		{
@@ -114,6 +121,16 @@ namespace GameSerializerCore
 			TSharedRef<FJsonObject> JsonObject;
 		};
 		TArray<FInstancedObjectData> InstancedObjectDatas;
+
+		void GetStruct(const TSharedRef<FJsonObject>& JsonObject, const FString& FieldName, UScriptStruct* Struct, void* Value);
+		template<typename T>
+		T GetStruct(const TSharedRef<FJsonObject>& JsonObject, const FString& FieldName)
+		{
+			static const T DefaultValue{};
+			T Value{ DefaultValue };
+			GetStruct(JsonObject, FieldName, TBaseStructure<T>::Get(), &Value);
+			return Value;
+		}
 	};
 
 	FString JsonObjectToString(const TSharedRef<FJsonObject>& JsonObject);

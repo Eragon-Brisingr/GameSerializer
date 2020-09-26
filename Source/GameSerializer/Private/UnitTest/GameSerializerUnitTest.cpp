@@ -47,7 +47,7 @@ void UGameSerializerUnitTest::ExecuteTest()
 	UE_LOG(LogTemp, Display, TEXT("%s"), *JSONPayload);
 
 	GameSerializerCore::FJsonToStruct JsonToStruct(GetTransientPackage(), JsonObject);
-	JsonToStruct.LoadAllData();
+	JsonToStruct.LoadAllDataImmediately();
 	TArray<UObject*> LoadedObjects = JsonToStruct.GetObjects(TEXT("ObjectList"));
 }
 

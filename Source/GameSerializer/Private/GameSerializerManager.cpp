@@ -187,7 +187,7 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 
 	if (TSharedRef<FLevelDeserializer>* StreamLoadedLevelDeserializerPtr = StreamLoadedLevelDataMap.Find(Level))
 	{
-		GameSerializerStatLog(STAT_GameSerializerManage_LoadLevel);
+		GameSerializerStatLog(STAT_GameSerializerManager_LoadStreamLevelEnd);
 		
 		UE_LOG(GameSerializer_Log, Display, TEXT("完成流式关卡[%s]加载"), *LevelName);
 		
@@ -205,7 +205,7 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 		{
 			FGuardValue_Bitfield(bShouldInitSpawnActor, false);
 
-			GameSerializerStatLog(STAT_GameSerializerManager_LoadStreamLevelEnd);
+			GameSerializerStatLog(STAT_GameSerializerManage_LoadLevel);
 			
 			UE_LOG(GameSerializer_Log, Display, TEXT("加载关卡[%s]"), *LevelName);
 			
@@ -224,7 +224,7 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 			FLevelDeserializer LevelDeserializer(Level, JsonObject.GetValue());
 			const FIntVector OldWorldOrigin = LevelDeserializer.GetStruct<FIntVector>(JsonFieldName::WorldOrigin);
 			TGuardValue<FIntVector> WorldOffsetGuard(FActorGameSerializerExtendData::WorldOffset, OldWorldOrigin - Level->GetWorld()->OriginLocation);
-			LevelDeserializer.LoadAllData();
+			LevelDeserializer.LoadAllDataImmediately();
 			const TArray<UObject*> LoadedActors = LevelDeserializer.GetObjects(JsonFieldName::LevelActors);
 			for (AActor* Actor : PrepareLoadActors)
 			{
@@ -301,7 +301,6 @@ void UGameSerializerManager::LoadOrInitWorld(UWorld* World)
 						TSharedRef<FLevelDeserializer> LevelDeserializer = MakeShared<FLevelDeserializer>(LoadedLevel, JsonObject.GetValue());
 						LevelDeserializer->LoadExternalObject();
 						LevelDeserializer->InstanceDynamicObject();
-						LevelDeserializer->DynamicActorExecuteConstruction();
 						LevelDeserializer->LoadDynamicObjectJsonData();
 						
 						const TArray<UObject*> LoadedActors = LevelDeserializer->GetObjects(JsonFieldName::LevelActors);
@@ -332,6 +331,12 @@ void UGameSerializerManager::LoadOrInitWorld(UWorld* World)
 
 void UGameSerializerManager::SerializeLevel(ULevel* Level)
 {
+	const bool bIsLevelConstructed = CastChecked<UWorld>(Level->GetOuter())->GetWorldSettings()->IsActorInitialized();
+	if (bIsLevelConstructed == false)
+	{
+		return;
+	}
+	
 	const FString LevelName = Level->GetOuter()->GetName();
 	UE_LOG(GameSerializer_Log, Display, TEXT("保存关卡[%s]"), *LevelName);
 
@@ -418,7 +423,7 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 			
 			const FIntVector OldWorldOrigin = PlayerDeserializer.GetStruct<FIntVector>(JsonFieldName::WorldOrigin);
 			TGuardValue<FIntVector> WorldOffsetGuard(FActorGameSerializerExtendData::WorldOffset, OldWorldOrigin - Pawn->GetWorld()->OriginLocation);
-			PlayerDeserializer.LoadAllData();
+			PlayerDeserializer.LoadAllDataImmediately();
 		}
 	}
 	

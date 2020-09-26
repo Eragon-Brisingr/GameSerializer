@@ -41,15 +41,12 @@ void UGameSerializerExtendDataFunctionLibrary::DefaultPostLoadGame(UObject* Inst
 	}
 }
 
-FIntVector FActorGameSerializerExtendData::WorldOffset;
+FIntVector FActorGameSerializerExtendData::WorldOffset = FIntVector::ZeroValue;
 
 FGameSerializerExtendDataContainer FActorGameSerializerExtendDataFactory::WhenGamePreSave(UObject* Instance)
 {
 	AActor* Actor = CastChecked<AActor>(Instance);
 	FActorGameSerializerExtendData ExtendData;
-	ExtendData.Location = Actor->GetActorLocation();
-	ExtendData.Rotation = Actor->GetActorRotation();
-	ExtendData.Scale3D = Actor->GetActorScale3D();
 	return FGameSerializerExtendDataContainer::Make(ExtendData);
 }
 
@@ -57,5 +54,4 @@ void FActorGameSerializerExtendDataFactory::WhenGamePostLoad(UObject* Instance, 
 {
 	AActor* Actor = CastChecked<AActor>(Instance);
 	const FActorGameSerializerExtendData& ActorExtendData = ExtendData.Get<FActorGameSerializerExtendData>();
-	Actor->SetActorTransform(FTransform(ActorExtendData.Rotation, ActorExtendData.Location + FVector(FActorGameSerializerExtendData::WorldOffset), ActorExtendData.Scale3D));
 }
