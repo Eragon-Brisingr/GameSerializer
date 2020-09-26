@@ -223,7 +223,7 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 
 			FLevelDeserializer LevelDeserializer(Level, JsonObject.GetValue());
 			const FIntVector OldWorldOrigin = LevelDeserializer.GetStruct<FIntVector>(JsonFieldName::WorldOrigin);
-			TGuardValue<FIntVector> WorldOffsetGuard(FActorGameSerializerExtendData::WorldOffset, OldWorldOrigin - Level->GetWorld()->OriginLocation);
+			TGuardValue<FIntVector> WorldOffsetGuard(GameSerializerContext::WorldOffset, OldWorldOrigin - Level->GetWorld()->OriginLocation);
 			LevelDeserializer.LoadAllDataImmediately();
 			const TArray<UObject*> LoadedActors = LevelDeserializer.GetObjects(JsonFieldName::LevelActors);
 			for (AActor* Actor : PrepareLoadActors)
@@ -299,6 +299,8 @@ void UGameSerializerManager::LoadOrInitWorld(UWorld* World)
 						}
 
 						TSharedRef<FLevelDeserializer> LevelDeserializer = MakeShared<FLevelDeserializer>(LoadedLevel, JsonObject.GetValue());
+						const FIntVector OldWorldOrigin = LevelDeserializer->GetStruct<FIntVector>(JsonFieldName::WorldOrigin);
+						TGuardValue<FIntVector> WorldOffsetGuard(GameSerializerContext::WorldOffset, OldWorldOrigin - LoadedLevel->GetWorld()->OriginLocation);
 						LevelDeserializer->LoadExternalObject();
 						LevelDeserializer->InstanceDynamicObject();
 						LevelDeserializer->LoadDynamicObjectJsonData();
@@ -422,7 +424,7 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 			PlayerDeserializer.RetargetDynamicObjectName(JsonFieldName::PlayerPawn, Pawn->GetFName());
 			
 			const FIntVector OldWorldOrigin = PlayerDeserializer.GetStruct<FIntVector>(JsonFieldName::WorldOrigin);
-			TGuardValue<FIntVector> WorldOffsetGuard(FActorGameSerializerExtendData::WorldOffset, OldWorldOrigin - Pawn->GetWorld()->OriginLocation);
+			TGuardValue<FIntVector> WorldOffsetGuard(GameSerializerContext::WorldOffset, OldWorldOrigin - Pawn->GetWorld()->OriginLocation);
 			PlayerDeserializer.LoadAllDataImmediately();
 		}
 	}

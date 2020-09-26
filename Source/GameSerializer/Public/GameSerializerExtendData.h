@@ -83,7 +83,6 @@ struct GAMESERIALIZER_API FActorGameSerializerExtendData : public FGameSerialize
 {
 	GENERATED_BODY()
 public:
-	static FIntVector WorldOffset;
 };
 
 struct GAMESERIALIZER_API FActorGameSerializerExtendDataFactory : public FGameSerializerExtendDataFactory

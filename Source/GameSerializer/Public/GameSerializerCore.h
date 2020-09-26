@@ -9,6 +9,10 @@
 /**
  * 
  */
+namespace GameSerializerContext
+{
+	extern FIntVector WorldOffset;
+}
 
 namespace GameSerializerCore
 {

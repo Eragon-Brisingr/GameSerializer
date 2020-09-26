@@ -857,6 +857,8 @@ namespace CustomJsonConverter
 	};
 }
 
+FIntVector GameSerializerContext::WorldOffset = FIntVector::ZeroValue;
+
 namespace GameSerializerCore
 {
 	constexpr FObjectIdx NullIdx = 0;
@@ -1171,8 +1173,7 @@ namespace GameSerializerCore
 		}
 	}
 
-	DECLARE_CYCLE_STAT(TEXT("JsonToStruct_LoadDynamicObjectExtendData"), STAT_JsonToStruct_LoadDynamicObjectExtendData,
-	                   STATGROUP_GameSerializer);
+	DECLARE_CYCLE_STAT(TEXT("JsonToStruct_LoadDynamicObjectExtendData"), STAT_JsonToStruct_LoadDynamicObjectExtendData, STATGROUP_GameSerializer);
 	void FJsonToStruct::LoadDynamicObjectExtendData()
 	{
 		GameSerializerStatLog(STAT_JsonToStruct_LoadDynamicObjectExtendData);
@@ -1242,8 +1243,8 @@ namespace GameSerializerCore
 			ensure(Object->IsA(ObjectClass));
 			if (AActor* Actor = Cast<AActor>(Object))
 			{
-				FTransform ActorTransform = GetStruct<FTransform>(ActorTransformFieldName);
-				ActorTransform.AddToTranslation(FVector(FActorGameSerializerExtendData::WorldOffset));
+				FTransform ActorTransform = GetStruct<FTransform>(JsonObject, ActorTransformFieldName);
+				ActorTransform.AddToTranslation(FVector(GameSerializerContext::WorldOffset));
 				Actor->SetActorTransform(ActorTransform);
 			}
 		}
@@ -1254,7 +1255,7 @@ namespace GameSerializerCore
 				ULevel* Level = CastChecked<ULevel>(Outer);
 
 				FTransform ActorTransform = GetStruct<FTransform>(JsonObject, ActorTransformFieldName);
-				ActorTransform.AddToTranslation(FVector(FActorGameSerializerExtendData::WorldOffset));
+				ActorTransform.AddToTranslation(FVector(GameSerializerContext::WorldOffset));
 				
 				FActorSpawnParameters ActorSpawnParameters;
 				ActorSpawnParameters.OverrideLevel = Level;

@@ -41,8 +41,6 @@ void UGameSerializerExtendDataFunctionLibrary::DefaultPostLoadGame(UObject* Inst
 	}
 }
 
-FIntVector FActorGameSerializerExtendData::WorldOffset = FIntVector::ZeroValue;
-
 FGameSerializerExtendDataContainer FActorGameSerializerExtendDataFactory::WhenGamePreSave(UObject* Instance)
 {
 	AActor* Actor = CastChecked<AActor>(Instance);
