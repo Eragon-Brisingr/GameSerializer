@@ -83,6 +83,8 @@ struct GAMESERIALIZER_API FActorGameSerializerExtendData : public FGameSerialize
 {
 	GENERATED_BODY()
 public:
+	UPROPERTY(SaveGame)
+	AActor* Owner = nullptr;
 };
 
 struct GAMESERIALIZER_API FActorGameSerializerExtendDataFactory : public FGameSerializerExtendDataFactory

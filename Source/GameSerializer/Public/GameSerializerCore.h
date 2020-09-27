@@ -63,7 +63,7 @@ namespace GameSerializerCore
 
 		FObjectIdx GetExternalObjectIndex(const UObject* ExternalObject);
 
-		void ObjectToJsonObject(const TSharedRef<FJsonObject>& JsonObject, UObject* Object);
+		FObjectIdx ObjectToJsonObject(const TSharedRef<FJsonObject>& JsonObject, UObject* Object);
 
 		FObjectIdx ConvertObjectToObjectIdx(UObject* Object);
 		TSharedPtr<FJsonValue> ConvertObjectToJson(FProperty* Property, const void* Value, const void* Default, bool& bSameValue);

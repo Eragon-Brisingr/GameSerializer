@@ -45,6 +45,7 @@ FGameSerializerExtendDataContainer FActorGameSerializerExtendDataFactory::WhenGa
 {
 	AActor* Actor = CastChecked<AActor>(Instance);
 	FActorGameSerializerExtendData ExtendData;
+	ExtendData.Owner = Actor->GetOwner();
 	return FGameSerializerExtendDataContainer::Make(ExtendData);
 }
 
@@ -52,4 +53,5 @@ void FActorGameSerializerExtendDataFactory::WhenGamePostLoad(UObject* Instance, 
 {
 	AActor* Actor = CastChecked<AActor>(Instance);
 	const FActorGameSerializerExtendData& ActorExtendData = ExtendData.Get<FActorGameSerializerExtendData>();
+	Actor->SetOwner(ActorExtendData.Owner);
 }

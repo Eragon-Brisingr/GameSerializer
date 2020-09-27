@@ -115,8 +115,22 @@ TOptional<TSharedRef<FJsonObject>> UGameSerializerManager::TryLoadJsonObject(con
 			TArray<uint8> BinaryArray;
 			if (SaveSystem->LoadGame(false, *FilePath, UserIndex, BinaryArray))
 			{
-				BinaryArray.Add(0);
-				const FString JsonString = FString(UTF8_TO_TCHAR(BinaryArray.GetData()));
+				uint8* CompressedBuffer = BinaryArray.GetData();
+				int32 CompressionHeader = 0;
+				const int32 CompressionHeaderSize = sizeof(CompressionHeader);
+
+				FMemory::Memcpy(&CompressionHeader, CompressedBuffer, CompressionHeaderSize);
+				CompressedBuffer += CompressionHeaderSize;
+
+				const int32 CompressedSize = BinaryArray.Num() - CompressionHeaderSize;
+				const int32 UncompressedSize = CompressionHeader;
+				TArray<uint8> UncompressedBuffer;
+				UncompressedBuffer.AddUninitialized(UncompressedSize);
+
+				FCompression::UncompressMemory(NAME_Zlib, UncompressedBuffer.GetData(), UncompressedSize, CompressedBuffer, CompressedSize);
+				
+				UncompressedBuffer.Add(0);
+				const FString JsonString = FString(UTF8_TO_TCHAR(UncompressedBuffer.GetData()));
 				const TSharedPtr<FJsonObject> JsonObject = GameSerializerCore::StringToJsonObject(JsonString);
 				if (ensure(JsonObject.IsValid()))
 				{
@@ -135,13 +149,26 @@ void UGameSerializerManager::SaveJsonObject(const TSharedRef<FJsonObject>& JsonO
 	{
 		const FString JsonString = GameSerializerCore::JsonObjectToString(JsonObject);
 
-		TArray<uint8> BinaryArray;
 		const FTCHARToUTF8 UTF8String(*JsonString);
-		const int32 DataSize = UTF8String.Length();
-		BinaryArray.SetNumUninitialized(DataSize);
-		FMemory::Memcpy(BinaryArray.GetData(), UTF8String.Get(), DataSize);
 		
-		SaveSystem->SaveGame(false, *FPaths::Combine(Category, FileName), UserIndex, BinaryArray);
+		const int32 UncompressedSize = UTF8String.Length();
+
+		int32 CompressionHeader = UncompressedSize;
+		const int32 CompressionHeaderSize = sizeof(CompressionHeader);
+
+		TArray<uint8> BinaryBuffer;
+		int32 CompressedSize = FMath::TruncToInt(1.1f * UncompressedSize);
+		BinaryBuffer.SetNum(CompressionHeaderSize + CompressedSize);
+
+		uint8* CompressedBuffer = BinaryBuffer.GetData();
+		FMemory::Memcpy(CompressedBuffer, &CompressionHeader, CompressionHeaderSize);
+		CompressedBuffer += CompressionHeaderSize;
+
+		FCompression::CompressMemory(NAME_Zlib, CompressedBuffer, CompressedSize, UTF8String.Get(), UncompressedSize, COMPRESS_BiasMemory);
+
+		BinaryBuffer.SetNum(CompressionHeaderSize + CompressedSize);
+		
+		SaveSystem->SaveGame(false, *FPaths::Combine(Category, FileName), UserIndex, BinaryBuffer);
 	}
 }
 
@@ -239,9 +266,9 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 			TArray<AActor*> PrepareLoadActors;
 			for (AActor* Actor : Level->Actors)
 			{
-				if (Actor && Actor->Implements<UActorGameSerializerInterface>())
+				if (Actor && Actor->GetOwner() == nullptr && Actor->Implements<UActorGameSerializerInterface>())
 				{
-					if (IActorGameSerializerInterface::CanGameSerialized(Actor))
+					if (IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
 					{
 						PrepareLoadActors.Add(Actor);
 					}
@@ -327,7 +354,7 @@ void UGameSerializerManager::LoadOrInitWorld(UWorld* World)
 						{
 							if (Actor && Actor->Implements<UActorGameSerializerInterface>())
 							{
-								if (IActorGameSerializerInterface::CanGameSerialized(Actor))
+								if (IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
 								{
 									PrepareLoadActors.Add(Actor);
 								}
@@ -386,7 +413,7 @@ void UGameSerializerManager::SerializeLevel(ULevel* Level)
 	{
 		if (IsValid(Actor) && Actor->Implements<UActorGameSerializerInterface>())
 		{
-			if (IActorGameSerializerInterface::CanGameSerialized(Actor))
+			if (IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
 			{
 				SerializeList.Add(Actor);
 			}
@@ -416,7 +443,8 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 
 	APlayerState* PlayerState = NewPlayer->GetPlayerState<APlayerState>();
 	check(PlayerState);
-
+	
+	FGuardValue_Bitfield(PlayerState->bUseCustomPlayerNames, true);
 	const FString PlayerName = PlayerState->GetPlayerName();
 
 	UE_LOG(GameSerializer_Log, Display, TEXT("玩家[%s]启动游戏序列化系统"), *PlayerName);

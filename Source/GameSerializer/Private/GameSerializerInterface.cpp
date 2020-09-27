@@ -53,6 +53,11 @@ void IComponentGameSerializerInterface::WhenGameInit_Implementation()
 
 void IGameSerializerInterface::WhenGamePostLoad_Implementation(const FGameSerializerExtendDataContainer& ExtendData)
 {
+	DefaultWhenGamePostLoad(ExtendData);
+}
+
+void IGameSerializerInterface::DefaultWhenGamePostLoad(const FGameSerializerExtendDataContainer& ExtendData)
+{
 	UObject* Self = CastChecked<UObject>(this);
 	UGameSerializerExtendDataFunctionLibrary::DefaultPostLoadGame(Self, ExtendData);
 }

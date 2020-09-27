@@ -873,6 +873,7 @@ namespace GameSerializerCore
 		constexpr TCHAR ExtendDataFieldName[] = TEXT("__ExtendData");
 		constexpr TCHAR ExtendDataTypeFieldName[] = TEXT("__Type");
 		constexpr TCHAR ActorTransformFieldName[] = TEXT("__ActorTransform");
+		constexpr TCHAR ActorOwnerFieldName[] = TEXT("__ActorOwner");
 	}
 	
 	using namespace CustomJsonConverter;
@@ -931,7 +932,7 @@ namespace GameSerializerCore
 		return ExternalObjectIdx;
 	}
 
-	void FStructToJson::ObjectToJsonObject(const TSharedRef<FJsonObject>& JsonObject, UObject* Object)
+	FObjectIdx FStructToJson::ObjectToJsonObject(const TSharedRef<FJsonObject>& JsonObject, UObject* Object)
 	{
 		OuterChain.Add(FOuterData(Object, JsonObject));
 		ON_SCOPE_EXIT
@@ -942,7 +943,8 @@ namespace GameSerializerCore
 
 		check(ObjectIdxMap.Contains(Object) == false);
 		ObjectUniqueIdx += 1;
-		ObjectIdxMap.Add(Object, ObjectUniqueIdx);
+		const FObjectIdx ObjectIdx = ObjectUniqueIdx;
+		ObjectIdxMap.Add(Object, ObjectIdx);
 
 		JsonObject->SetStringField(ObjectNameFieldName, Object->GetName());
 		JsonObject->SetNumberField(ObjectClassFieldName, GetExternalObjectIndex(Class));
@@ -974,6 +976,7 @@ namespace GameSerializerCore
 
 		bool bSameValue;
 		ensure(StructToJson::UStructToJsonAttributes(Class, Object, Class->GetDefaultObject(), bSameValue, JsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
+		return ObjectIdx;
 	}
 
 	FObjectIdx FStructToJson::ConvertObjectToObjectIdx(UObject* Object)
@@ -993,10 +996,8 @@ namespace GameSerializerCore
 		}
 		else
 		{
-			const FObjectIdx NewObjectIdx = ObjectUniqueIdx + 1;
-			
 			const TSharedRef<FJsonObject> JsonObject = MakeShared<FJsonObject>();
-			ObjectToJsonObject(JsonObject, Object);
+			const FObjectIdx NewObjectIdx = ObjectToJsonObject(JsonObject, Object);
 			DynamicJsonObject->SetObjectField(FString::FromInt(NewObjectIdx), JsonObject);
 
 			return NewObjectIdx;
@@ -1017,6 +1018,11 @@ namespace GameSerializerCore
 			
 			if (SubObject != nullptr)
 			{
+				if (FObjectIdx* ObjectIdx = ObjectIdxMap.Find(SubObject))
+				{
+					return MakeShared<FJsonValueNumber>(*ObjectIdx);
+				}
+
 				// 存在于包内的数据记录路径即可
 				// TODO：找到直接判断是否在持久性包内的方法
 				if (SubObject->IsAsset() || SubObject->IsA<UStruct>())
@@ -1025,33 +1031,43 @@ namespace GameSerializerCore
 					return MakeShared<FJsonValueNumber>(ExternalObjectIdx);
 				}
 
-				// 能找到Outer的储存所有数据
-				for (FObjectIdx Idx = OuterChain.Num() - 1; Idx >= 0; --Idx)
+				// Actor用Owner进行归属的判断
+				if (AActor* SubActor = Cast<AActor>(SubObject))
 				{
-					const FOuterData& TestOuterData = OuterChain[Idx];
-					if (SubObject->GetOuter() == TestOuterData.Outer)
+					for (FObjectIdx Idx = OuterChain.Num() - 1; Idx >= 0; --Idx)
 					{
-						TSharedPtr<FJsonObject> SubObjectsJsonObject;
-						if (TestOuterData.OuterJsonObject->HasField(SubObjectsFieldName))
+						if (SubActor->GetOwner() == OuterChain[Idx].Outer)
 						{
-							SubObjectsJsonObject = TestOuterData.OuterJsonObject->GetObjectField(SubObjectsFieldName);
-						}
-						else
-						{
-							SubObjectsJsonObject = MakeShared<FJsonObject>();
-							TestOuterData.OuterJsonObject->SetObjectField(SubObjectsFieldName, SubObjectsJsonObject);
-						}
-
-						if (ObjectIdxMap.Contains(SubObject))
-						{
-							return MakeShared<FJsonValueNumber>(ObjectIdxMap[SubObject]);
-						}
-						else
-						{
-							const FObjectIdx ObjectIdx = ObjectUniqueIdx + 1;
-							const TSharedRef<FJsonObject> SubObjectJsonObject = MakeShared<FJsonObject>();
+							const TSharedRef<FJsonObject> SubActorJsonObject = MakeShared<FJsonObject>();
+							const FObjectIdx ObjectIdx = ObjectToJsonObject(SubActorJsonObject, SubObject);
 							
-							ObjectToJsonObject(SubObjectJsonObject, SubObject);
+							DynamicJsonObject->SetObjectField(FString::FromInt(ObjectIdx), SubActorJsonObject);
+							return MakeShared<FJsonValueNumber>(ObjectIdx);
+						}
+					}
+				}
+				else
+				{
+					// 能找到Outer的储存所有数据
+					for (FObjectIdx Idx = OuterChain.Num() - 1; Idx >= 0; --Idx)
+					{
+						const FOuterData& TestOuterData = OuterChain[Idx];
+						if (SubObject->GetOuter() == TestOuterData.Outer)
+						{
+							TSharedPtr<FJsonObject> SubObjectsJsonObject;
+							if (TestOuterData.OuterJsonObject->HasField(SubObjectsFieldName))
+							{
+								SubObjectsJsonObject = TestOuterData.OuterJsonObject->GetObjectField(SubObjectsFieldName);
+							}
+							else
+							{
+								SubObjectsJsonObject = MakeShared<FJsonObject>();
+								TestOuterData.OuterJsonObject->SetObjectField(SubObjectsFieldName, SubObjectsJsonObject);
+							}
+
+							const TSharedRef<FJsonObject> SubObjectJsonObject = MakeShared<FJsonObject>();
+
+							const FObjectIdx ObjectIdx = ObjectToJsonObject(SubObjectJsonObject, SubObject);
 							SubObjectsJsonObject->SetObjectField(FString::FromInt(ObjectIdx), SubObjectJsonObject);
 							return MakeShared<FJsonValueNumber>(ObjectIdx);
 						}

@@ -26,6 +26,9 @@ public:
 	void WhenGamePostLoad(const FGameSerializerExtendDataContainer& ExtendData);
 	virtual void WhenGamePostLoad_Implementation(const FGameSerializerExtendDataContainer& ExtendData);
 	static void WhenGamePostLoad(UObject* Obj, const FGameSerializerExtendDataContainer& ExtendData);
+
+protected:
+	void DefaultWhenGamePostLoad(const FGameSerializerExtendDataContainer& ExtendData);
 };
 
 UINTERFACE(MinimalAPI)
@@ -60,7 +63,7 @@ public:
 	static void WhenGameInit(UObject* Obj);
 
 	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
-	bool CanGameSerialized() const;
-	virtual bool CanGameSerialized_Implementation() const { return true; }
-	static bool CanGameSerialized(UObject* Obj) { return Execute_CanGameSerialized(Obj); }
+	bool CanGameSerializedInLevel() const;
+	virtual bool CanGameSerializedInLevel_Implementation() const { return true; }
+	static bool CanGameSerializedInLevel(UObject* Obj) { return Execute_CanGameSerializedInLevel(Obj); }
 };
