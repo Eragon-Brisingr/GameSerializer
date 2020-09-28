@@ -104,7 +104,7 @@ void UGameSerializerManager::Deinitialize()
 	FWorldDelegates::OnPostWorldInitialization.Remove(OnGameModeInitialized_DelegateHandle);
 }
 
-TOptional<TSharedRef<FJsonObject>> UGameSerializerManager::TryLoadJsonObject(const FString& Category, const FString& FileName)
+TOptional<TSharedRef<FJsonObject>> UGameSerializerManager::TryLoadJsonObject(UWorld* World, const FString& Category, const FString& FileName)
 {
 	ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
 	if (ensure(SaveSystem))
@@ -142,7 +142,7 @@ TOptional<TSharedRef<FJsonObject>> UGameSerializerManager::TryLoadJsonObject(con
 	return {};
 }
 
-void UGameSerializerManager::SaveJsonObject(const TSharedRef<FJsonObject>& JsonObject, const FString& Category, const FString& FileName)
+void UGameSerializerManager::SaveJsonObject(UWorld* World, const TSharedRef<FJsonObject>& JsonObject, const FString& Category, const FString& FileName)
 {
 	ISaveGameSystem* SaveSystem = IPlatformFeaturesModule::Get().GetSaveGameSystem();
 	if (ensure(SaveSystem))
@@ -151,12 +151,11 @@ void UGameSerializerManager::SaveJsonObject(const TSharedRef<FJsonObject>& JsonO
 
 		const FTCHARToUTF8 UTF8String(*JsonString);
 		
+		TArray<uint8> BinaryBuffer;
 		const int32 UncompressedSize = UTF8String.Length();
-
 		int32 CompressionHeader = UncompressedSize;
 		const int32 CompressionHeaderSize = sizeof(CompressionHeader);
 
-		TArray<uint8> BinaryBuffer;
 		int32 CompressedSize = FMath::TruncToInt(1.1f * UncompressedSize);
 		BinaryBuffer.SetNum(CompressionHeaderSize + CompressedSize);
 
@@ -254,7 +253,7 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 	
 	if (bInvokeLoadGame)
 	{
-		TOptional<TSharedRef<FJsonObject>> JsonObject = TryLoadJsonObject(TEXT("Levels"), *LevelName);
+		TOptional<TSharedRef<FJsonObject>> JsonObject = TryLoadJsonObject(Level->GetWorld(), TEXT("Levels"), *LevelName);
 		if (JsonObject.IsSet())
 		{
 			FGuardValue_Bitfield(bShouldInitSpawnActor, false);
@@ -340,7 +339,7 @@ void UGameSerializerManager::LoadOrInitWorld(UWorld* World)
 				const FString LevelName = LoadedLevel->GetOuter()->GetName();
 				if (bInvokeLoadGame)
 				{
-					TOptional<TSharedRef<FJsonObject>> JsonObject = TryLoadJsonObject(TEXT("Levels"), *LevelName);
+					TOptional<TSharedRef<FJsonObject>> JsonObject = TryLoadJsonObject(LoadedLevel->GetWorld(), TEXT("Levels"), *LevelName);
 					if (JsonObject.IsSet())
 					{
 						FGuardValue_Bitfield(bShouldInitSpawnActor, false);
@@ -433,7 +432,7 @@ void UGameSerializerManager::SerializeLevel(ULevel* Level)
 	LevelSerializer.AddObjects(JsonFieldName::LevelActors, SerializeList);
 
 	const TSharedRef<FJsonObject> JsonObject = LevelSerializer.GetResultJson();
-	SaveJsonObject(JsonObject, TEXT("Levels"), *LevelName);
+	SaveJsonObject(Level->GetWorld(), JsonObject, TEXT("Levels"), *LevelName);
 }
 
 APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, AController* NewPlayer, const FTransform& SpawnTransform)
@@ -468,7 +467,7 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 	
 	if (bInvokeLoadGame)
 	{
-		TOptional<TSharedRef<FJsonObject>> JsonObject = TryLoadJsonObject(TEXT("Players"), *PlayerName);
+		TOptional<TSharedRef<FJsonObject>> JsonObject = TryLoadJsonObject(Pawn->GetWorld(), TEXT("Players"), *PlayerName);
 		if (JsonObject.IsSet())
 		{
 			const TSharedRef<FJsonObject> RootJsonObject = JsonObject.GetValue();
@@ -518,5 +517,5 @@ void UGameSerializerManager::OnPlayerPawnEndPlay(AActor* PawnActor, EEndPlayReas
 
 	Pawn->MarkPendingKill();
 
-	SaveJsonObject(PlayerSerializer.GetResultJson(), TEXT("Players"), *Pawn->GetName());
+	SaveJsonObject(Pawn->GetWorld(), PlayerSerializer.GetResultJson(), TEXT("Players"), *Pawn->GetName());
 }

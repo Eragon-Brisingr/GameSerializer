@@ -276,15 +276,6 @@ namespace CustomJsonConverter
 			return MakeShared<FJsonValueArray>(Array);
 		}
 
-		static FString StandardizeCase(const FString& StringIn)
-		{
-			// this probably won't work for all cases, consider downcaseing the string fully
-			FString FixedString = StringIn;
-			FixedString[0] = FChar::ToLower(FixedString[0]); // our json classes/variable start lower case
-			FixedString.ReplaceInline(TEXT("ID"), TEXT("Id"), ESearchCase::CaseSensitive); // Id is standard instead of ID, some of our fnames use ID
-			return FixedString;
-		}
-
 		static bool UStructToJsonAttributes(const UStruct* StructDefinition, const void* Struct, const void* DefaultStruct, bool& bSameValue, TMap< FString, TSharedPtr<FJsonValue> >& OutJsonAttributes, int64 CheckFlags, int64 SkipFlags, const FCustomExportCallback& ExportCb)
 		{
 			if (SkipFlags == 0)
@@ -320,7 +311,7 @@ namespace CustomJsonConverter
 					continue;
 				}
 
-				FString VariableName = StandardizeCase(Property->GetName());
+				FString VariableName = Property->GetName();
 				const void* Value = Property->ContainerPtrToValuePtr<uint8>(Struct);
 				const void* DefaultValue = DefaultStruct ? Property->ContainerPtrToValuePtr<uint8>(DefaultStruct) : nullptr;
 

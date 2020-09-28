@@ -36,7 +36,7 @@ public:
 /**
  * 
  */
-UCLASS()
+UCLASS(abstract)
 class GAMESERIALIZER_API UGameSerializerManager : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()
@@ -46,8 +46,8 @@ public:
 	void Initialize(FSubsystemCollectionBase& Collection) override;
 	void Deinitialize() override;
 protected:
-	virtual TOptional<TSharedRef<FJsonObject>> TryLoadJsonObject(const FString& Category, const FString& FileName);
-	virtual void SaveJsonObject(const TSharedRef<FJsonObject>& JsonObject, const FString& Category, const FString& FileName);
+	virtual TOptional<TSharedRef<FJsonObject>> TryLoadJsonObject(UWorld* World, const FString& Category, const FString& FileName);
+	virtual void SaveJsonObject(UWorld* World, const TSharedRef<FJsonObject>& JsonObject, const FString& Category, const FString& FileName);
 
 	int32 UserIndex = 0;
 
