@@ -88,14 +88,22 @@ void UGameSerializerManager::EnableSystem()
 	if (ensure(bIsEnable == false))
 	{
 		bIsEnable = true;
-		UWorld* World = GetWorld();
-		if (World->IsServer() == false)
-		{
-			return;
-		}
 
-		OnGameModeInitialized_DelegateHandle = FGameModeEvents::GameModeInitializedEvent.AddWeakLambda(this, [this, World](AGameModeBase*)
+		if (UWorld* World = GetWorld())
 		{
+			if (World->IsServer() == false)
+			{
+				return;
+			}
+			if (LoadedWorld != World && World->GetGameState() != nullptr)
+			{
+				LoadOrInitWorld(World);
+			}
+		}
+		
+		OnGameModeInitialized_DelegateHandle = FGameModeEvents::GameModeInitializedEvent.AddWeakLambda(this, [this](AGameModeBase* GameMode)
+		{
+			UWorld* World = GameMode->GetWorld();
 			World->GameStateSetEvent.AddWeakLambda(this, [this, World](AGameStateBase*)
 			{
 				if (bIsEnable == false || IsArchiveWorld(World) == false)
@@ -235,7 +243,6 @@ DECLARE_CYCLE_STAT(TEXT("GameSerializerManager_InitLevel"), STAT_GameSerializerM
 DECLARE_CYCLE_STAT(TEXT("GameSerializerManager_LoadStreamLevelEnd"), STAT_GameSerializerManager_LoadStreamLevelEnd, STATGROUP_GameSerializer);
 void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 {
-#if DO_CHECK
 	const bool IsUnLoaded = LoadedLevels.Contains(Level) == false;
 	ensure(IsUnLoaded);
 	if (IsUnLoaded == false)
@@ -243,7 +250,6 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 		return;
 	}
 	LoadedLevels.Add(Level);
-#endif
 	
 	const FString LevelName = Level->GetOuter()->GetName();
 	AWorldSettings* WorldSettings = CastChecked<UWorld>(Level->GetOuter())->GetWorldSettings();
@@ -255,14 +261,13 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 
 		LevelComponent->OnLevelRemoved.BindWeakLambda(this, [this](ULevel* RemovedLevel)
 		{
-#if DO_CHECK
 			const bool IsLoadedLevel = LoadedLevels.Contains(RemovedLevel);
 			ensure(IsLoadedLevel);
 			if (IsLoadedLevel == false)
 			{
 				return;
 			}
-#endif
+			LoadedLevels.Remove(RemovedLevel);
 			SerializeLevel(RemovedLevel);
 		});
 	}
@@ -346,14 +351,18 @@ DECLARE_CYCLE_STAT(TEXT("GameSerializerManager_LoadStreamLevelStart"), STAT_Game
 DECLARE_CYCLE_STAT(TEXT("GameSerializerManager_LoadOrInitWorld"), STAT_GameSerializerManage_LoadOrInitWorld, STATGROUP_GameSerializer);
 void UGameSerializerManager::LoadOrInitWorld(UWorld* World)
 {
+	if (LoadedWorld == World)
+	{
+		return;
+	}
+	LoadedWorld = World;
+	
 	GameSerializerStatLog(STAT_GameSerializerManage_LoadOrInitWorld);
 	
 	UE_LOG(GameSerializer_Log, Display, TEXT("世界[%s]启动游戏序列化系统"), *World->GetName());
 
-#if DO_CHECK
 	ensure(LoadedLevels.Num() == 0);
 	LoadedLevels.Reset();
-#endif
 	
 	const TArray<ULevelStreaming*>& StreamingLevels = World->GetStreamingLevels();
 	CachedLevelStreamingLambdas.Reset(StreamingLevels.Num());

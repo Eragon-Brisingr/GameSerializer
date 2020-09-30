@@ -87,9 +87,8 @@ private:
 	uint8 bInvokeLoadGame : 1;
 	uint8 bShouldInitSpawnActor : 1;
 
-#if DO_CHECK
+	TWeakObjectPtr<UWorld> LoadedWorld;
 	TArray<TWeakObjectPtr<ULevel>> LoadedLevels;
-#endif
 
 	TMap<TWeakObjectPtr<ULevel>, TSharedRef<struct FLevelDeserializer>> StreamLoadedLevelDataMap;
 	UPROPERTY(Transient)
