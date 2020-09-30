@@ -17,6 +17,8 @@ public:
 	FOnLevelRemoved OnLevelRemoved;
 	
 	void OnUnregister() override;
+
+	bool bIsRemovedLevel = false;
 };
 
 UCLASS()
@@ -45,7 +47,13 @@ public:
 
 	void Initialize(FSubsystemCollectionBase& Collection) override;
 	void Deinitialize() override;
+
+	bool IsEnable() const { return bIsEnable; }
+	void EnableSystem();
+	void DisableSystem();
 protected:
+	// 判定是否可以启动游戏序列化系统
+	virtual bool IsArchiveWorld(UWorld* World) const;
 	virtual TOptional<TSharedRef<FJsonObject>> TryLoadJsonObject(UWorld* World, const FString& Category, const FString& FileName);
 	virtual void SaveJsonObject(UWorld* World, const TSharedRef<FJsonObject>& JsonObject, const FString& Category, const FString& FileName);
 
@@ -56,21 +64,26 @@ protected:
 	void LoadOrInitWorld(UWorld* World);
 
 	void SerializeLevel(ULevel* Level);
-public:
+
 	void WhenLevelInited(ULevel* Level) { OnLevelInitedNative.Broadcast(Level); }
+	void WhenLevelLoaded(ULevel* Level) { OnLevelLoadedNative.Broadcast(Level); }
+	void WhenLevelPreSave(ULevel* Level) { OnLevelPreSaveNative.Broadcast(Level); }
+public:
+	UFUNCTION(BlueprintCallable, Category = "游戏序列化")
+	void ArchiveWorldAllState(UWorld* World);
+	
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnLevelInitedNative, ULevel*);
 	FOnLevelInitedNative OnLevelInitedNative;
 
-	void WhenLevelLoaded(ULevel* Level) { OnLevelLoadedNative.Broadcast(Level); }
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnLevelLoadedNative, ULevel*);
 	FOnLevelLoadedNative OnLevelLoadedNative;
 
-	void WhenLevelPreSave(ULevel* Level) { OnLevelPreSaveNative.Broadcast(Level); }
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnLevelPreSaveNative, ULevel*);
 	FOnLevelPreSaveNative OnLevelPreSaveNative;
 private:
 	FDelegateHandle OnGameModeInitialized_DelegateHandle;
 	FDelegateHandle OnLevelAdd_DelegateHandle;
+	uint8 bIsEnable : 1;
 	uint8 bInvokeLoadGame : 1;
 	uint8 bShouldInitSpawnActor : 1;
 
@@ -84,14 +97,15 @@ private:
 public:
 	struct FPlayerData
 	{
-		TWeakObjectPtr<APlayerController> PlayerController;
+		TWeakObjectPtr<APawn> OriginPawn;
 		TWeakObjectPtr<APlayerState> PlayerState;
 	};
-	TMap<TWeakObjectPtr<APawn>, FPlayerData> PlayerDataMap;
+	TMap<TWeakObjectPtr<APlayerController>, FPlayerData> PlayerDataMap;
 
 	UFUNCTION(BlueprintCallable, Category = "游戏序列化")
 	APawn* LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, AController* NewPlayer, const FTransform& SpawnTransform);
+	void SerializePlayer(APlayerController* Player);
 private:
 	UFUNCTION()
-	void OnPlayerPawnEndPlay(AActor* PawnActor, EEndPlayReason::Type EndPlayReason);
+	void OnPlayerPawnEndPlay(AActor* Controller, EEndPlayReason::Type EndPlayReason);
 };

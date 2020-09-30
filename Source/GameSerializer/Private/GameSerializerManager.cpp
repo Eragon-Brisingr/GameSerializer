@@ -52,6 +52,7 @@ void UGameSerializerLevelComponent::OnUnregister()
 	Super::OnUnregister();
 
 	OnLevelRemoved.Execute(GetOwner()->GetLevel());
+	bIsRemovedLevel = true;
 }
 
 UGameSerializerLevelStreamingLambda::UGameSerializerLevelStreamingLambda()
@@ -65,7 +66,8 @@ void UGameSerializerLevelStreamingLambda::WhenLevelLoaded()
 }
 
 UGameSerializerManager::UGameSerializerManager()
-	: bInvokeLoadGame(true)
+	: bIsEnable(false)
+	, bInvokeLoadGame(true)
 	, bShouldInitSpawnActor(true)
 {
 	
@@ -73,35 +75,63 @@ UGameSerializerManager::UGameSerializerManager()
 
 void UGameSerializerManager::Initialize(FSubsystemCollectionBase& Collection)
 {
-	UWorld* World = GetWorld();
-	if (World->IsServer() == false)
-	{
-		return;
-	}
+	EnableSystem();
+}
 
-	OnGameModeInitialized_DelegateHandle = FGameModeEvents::GameModeInitializedEvent.AddWeakLambda(this, [this, World](AGameModeBase*)
-	{
-		World->GameStateSetEvent.AddWeakLambda(this, [this, World](AGameStateBase*)
-		{
-			LoadOrInitWorld(World);
-		});
-	});
+void UGameSerializerManager::Deinitialize()
+{
+	DisableSystem();
+}
 
-	OnLevelAdd_DelegateHandle = FWorldDelegates::LevelAddedToWorld.AddWeakLambda(this, [this](ULevel* Level, UWorld* World)
+void UGameSerializerManager::EnableSystem()
+{
+	if (ensure(bIsEnable == false))
 	{
+		bIsEnable = true;
+		UWorld* World = GetWorld();
 		if (World->IsServer() == false)
 		{
 			return;
 		}
 
-		LoadOrInitLevel(Level);
-	});
+		OnGameModeInitialized_DelegateHandle = FGameModeEvents::GameModeInitializedEvent.AddWeakLambda(this, [this, World](AGameModeBase*)
+		{
+			World->GameStateSetEvent.AddWeakLambda(this, [this, World](AGameStateBase*)
+			{
+				if (bIsEnable == false || IsArchiveWorld(World) == false)
+				{
+					return;
+				}
+
+				LoadOrInitWorld(World);
+			});
+		});
+
+		OnLevelAdd_DelegateHandle = FWorldDelegates::LevelAddedToWorld.AddWeakLambda(this, [this](ULevel* Level, UWorld* World)
+		{
+			if (bIsEnable == false || IsArchiveWorld(World) == false)
+			{
+				return;
+			}
+
+			LoadOrInitLevel(Level);
+		});
+	}
 }
 
-void UGameSerializerManager::Deinitialize()
+void UGameSerializerManager::DisableSystem()
 {
-	FWorldDelegates::LevelAddedToWorld.Remove(OnLevelAdd_DelegateHandle);
-	FWorldDelegates::OnPostWorldInitialization.Remove(OnGameModeInitialized_DelegateHandle);
+	if (ensure(bIsEnable))
+	{
+		bIsEnable = false;
+		FWorldDelegates::LevelAddedToWorld.Remove(OnLevelAdd_DelegateHandle);
+		FWorldDelegates::OnPostWorldInitialization.Remove(OnGameModeInitialized_DelegateHandle);
+	}
+}
+
+bool UGameSerializerManager::IsArchiveWorld(UWorld* World) const
+{
+	return World->IsServer();
 }
 
 TOptional<TSharedRef<FJsonObject>> UGameSerializerManager::TryLoadJsonObject(UWorld* World, const FString& Category, const FString& FileName)
@@ -395,8 +425,10 @@ void UGameSerializerManager::LoadOrInitWorld(UWorld* World)
 
 void UGameSerializerManager::SerializeLevel(ULevel* Level)
 {
-	const bool bIsLevelConstructed = CastChecked<UWorld>(Level->GetOuter())->GetWorldSettings()->IsActorInitialized();
-	if (bIsLevelConstructed == false)
+	AWorldSettings* LevelSettings = CastChecked<UWorld>(Level->GetOuter())->GetWorldSettings();
+	const bool bIsLevelConstructed = LevelSettings->IsActorInitialized();
+	UGameSerializerLevelComponent* GameSerializerLevelData = LevelSettings->FindComponentByClass<UGameSerializerLevelComponent>();
+	if (bIsLevelConstructed == false || GameSerializerLevelData == nullptr || GameSerializerLevelData->bIsRemovedLevel == true)
 	{
 		return;
 	}
@@ -435,6 +467,29 @@ void UGameSerializerManager::SerializeLevel(ULevel* Level)
 	SaveJsonObject(Level->GetWorld(), JsonObject, TEXT("Levels"), *LevelName);
 }
 
+void UGameSerializerManager::ArchiveWorldAllState(UWorld* World)
+{
+	if (ensure(IsArchiveWorld(World)))
+	{
+		for (auto PlayerControllerIterator = World->GetPlayerControllerIterator(); PlayerControllerIterator; ++PlayerControllerIterator)
+		{
+			APlayerController* PlayerController = PlayerControllerIterator->Get();
+			if (ensure(PlayerController))
+			{
+				SerializePlayer(PlayerController);
+			}
+		}
+
+		// 持久性关卡最后保存（可能有全局数据）
+		const TArray<ULevel*>& Levels = World->GetLevels();
+		for (int32 Idx = Levels.Num() - 1; Idx >= 0; --Idx)
+		{
+			ULevel* Level = Levels[Idx];
+			SerializeLevel(Level);
+		}
+	}
+}
+
 APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, AController* NewPlayer, const FTransform& SpawnTransform)
 {
 	UWorld* World = GameMode->GetWorld();
@@ -446,8 +501,6 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 	FGuardValue_Bitfield(PlayerState->bUseCustomPlayerNames, true);
 	const FString PlayerName = PlayerState->GetPlayerName();
 
-	UE_LOG(GameSerializer_Log, Display, TEXT("玩家[%s]启动游戏序列化系统"), *PlayerName);
-	
 	FActorSpawnParameters SpawnInfo;
 	SpawnInfo.Name = *PlayerName;
 	SpawnInfo.Instigator = GameMode->GetInstigator();
@@ -455,14 +508,21 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 	UClass* PawnClass = GameMode->GetDefaultPawnClassForController(NewPlayer);
 	APawn* Pawn = World->SpawnActor<APawn>(PawnClass, SpawnTransform, SpawnInfo);
 
+	if (IsArchiveWorld(World) == false)
+	{
+		return Pawn;
+	}
+
+	UE_LOG(GameSerializer_Log, Display, TEXT("玩家[%s]启动游戏序列化系统"), *PlayerName);
+
 	APlayerController* PlayerController = Cast<APlayerController>(NewPlayer);
 	if (ensure(PlayerController))
 	{
 		FPlayerData PlayerData;
-		PlayerData.PlayerController = PlayerController;
+		PlayerData.OriginPawn = Pawn;
 		PlayerData.PlayerState = PlayerState;
-		PlayerDataMap.Add(Pawn, PlayerData);
-		Pawn->OnEndPlay.AddDynamic(this, &UGameSerializerManager::OnPlayerPawnEndPlay);
+		PlayerDataMap.Add(PlayerController, PlayerData);
+		PlayerController->OnEndPlay.AddDynamic(this, &UGameSerializerManager::OnPlayerPawnEndPlay);
 	}
 	
 	if (bInvokeLoadGame)
@@ -497,25 +557,39 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 	return Pawn;
 }
 
-void UGameSerializerManager::OnPlayerPawnEndPlay(AActor* PawnActor, EEndPlayReason::Type EndPlayReason)
+void UGameSerializerManager::SerializePlayer(APlayerController* Player)
 {
-	APawn* Pawn = CastChecked<APawn>(PawnActor);
-	const FPlayerData PlayerData = PlayerDataMap.FindAndRemoveChecked(Pawn);
-
-	struct FPlayerSerializer : public GameSerializerCore::FStructToJson
+	const FPlayerData& PlayerData = PlayerDataMap.FindChecked(Player);
+	APawn* Pawn = PlayerData.OriginPawn.Get();
+	if (ensure(Pawn))
 	{
-		FPlayerSerializer()
+		struct FPlayerSerializer : public GameSerializerCore::FStructToJson
 		{
-			CheckFlags = CPF_SaveGame;
-		}
-	};
-	FPlayerSerializer PlayerSerializer;
-	PlayerSerializer.AddStruct(JsonFieldName::WorldOrigin, Pawn->GetWorld()->OriginLocation);
-	PlayerSerializer.AddObject(JsonFieldName::PlayerController, PlayerData.PlayerController.Get(true));
-	PlayerSerializer.AddObject(JsonFieldName::PlayerState, PlayerData.PlayerState.Get(true));
-	PlayerSerializer.AddObject(JsonFieldName::PlayerPawn, Pawn);
+			FPlayerSerializer()
+			{
+				CheckFlags = CPF_SaveGame;
+			}
+		};
+		FPlayerSerializer PlayerSerializer;
+		PlayerSerializer.AddStruct(JsonFieldName::WorldOrigin, Pawn->GetWorld()->OriginLocation);
+		PlayerSerializer.AddObject(JsonFieldName::PlayerController, Player);
+		PlayerSerializer.AddObject(JsonFieldName::PlayerState, PlayerData.PlayerState.Get(true));
+		PlayerSerializer.AddObject(JsonFieldName::PlayerPawn, Pawn);
 
-	Pawn->MarkPendingKill();
+		Pawn->MarkPendingKill();
 
-	SaveJsonObject(Pawn->GetWorld(), PlayerSerializer.GetResultJson(), TEXT("Players"), *Pawn->GetName());
+		SaveJsonObject(Pawn->GetWorld(), PlayerSerializer.GetResultJson(), TEXT("Players"), *Pawn->GetName());
+	}
+}
+
+void UGameSerializerManager::OnPlayerPawnEndPlay(AActor* Controller, EEndPlayReason::Type EndPlayReason)
+{
+	if (bIsEnable == false)
+	{
+		return;
+	}
+	
+	APlayerController* Player = CastChecked<APlayerController>(Controller);
+	SerializePlayer(Player);
+	PlayerDataMap.Remove(Player);
 }
