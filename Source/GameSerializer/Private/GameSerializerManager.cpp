@@ -7,6 +7,7 @@
 #include <GameFramework/PlayerState.h>
 #include <GameFramework/GameModeBase.h>
 #include <Engine/LevelStreaming.h>
+#include <GameFramework/GameStateBase.h>
 
 #include "GameSerializer_Log.h"
 #include "GameSerializerCore.h"
@@ -16,6 +17,7 @@ namespace JsonFieldName
 {
 	constexpr TCHAR LevelActors[] = TEXT("LevelActors");
 	constexpr TCHAR WorldOrigin[] = TEXT("WorldOrigin");
+	constexpr TCHAR GameState[] = TEXT("GameState");
 
 	constexpr TCHAR PlayerPawn[] = TEXT("Pawn");
 	constexpr TCHAR PlayerState[] = TEXT("PlayerState");
@@ -312,6 +314,14 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 			FLevelDeserializer LevelDeserializer(Level, JsonObject.GetValue());
 			const FIntVector OldWorldOrigin = LevelDeserializer.GetStruct<FIntVector>(JsonFieldName::WorldOrigin);
 			TGuardValue<FIntVector> WorldOffsetGuard(GameSerializerContext::WorldOffset, OldWorldOrigin - Level->GetWorld()->OriginLocation);
+
+			UWorld* World = Level->GetWorld();
+			const bool IsMainLevel = World->PersistentLevel == Level;
+			if (IsMainLevel)
+			{
+				LevelDeserializer.RetargetDynamicObjectName(JsonFieldName::GameState, World->GetGameState()->GetFName());
+			}
+			
 			LevelDeserializer.LoadAllDataImmediately();
 			const TArray<UObject*> LoadedActors = LevelDeserializer.GetObjects(JsonFieldName::LevelActors);
 			for (AActor* Actor : PrepareLoadActors)
@@ -471,6 +481,13 @@ void UGameSerializerManager::SerializeLevel(ULevel* Level)
 	FLevelSerializer LevelSerializer;
 	LevelSerializer.AddStruct(JsonFieldName::WorldOrigin, Level->GetWorld()->OriginLocation);
 	LevelSerializer.AddObjects(JsonFieldName::LevelActors, SerializeList);
+
+	UWorld* World = Level->GetWorld();
+	const bool IsMainLevel = World->PersistentLevel == Level;
+	if (IsMainLevel)
+	{
+		LevelSerializer.AddObject(JsonFieldName::GameState, World->GetGameState());
+	}
 
 	const TSharedRef<FJsonObject> JsonObject = LevelSerializer.GetResultJson();
 	SaveJsonObject(Level->GetWorld(), JsonObject, TEXT("Levels"), *LevelName);
