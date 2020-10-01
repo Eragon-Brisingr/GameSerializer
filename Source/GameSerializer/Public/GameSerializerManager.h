@@ -51,6 +51,7 @@ public:
 	bool IsEnable() const { return bIsEnable; }
 	void EnableSystem();
 	void DisableSystem();
+	void DisableAutoSave();
 protected:
 	// 判定是否可以启动游戏序列化系统
 	virtual bool IsArchiveWorld(UWorld* World) const;
@@ -64,6 +65,7 @@ protected:
 	void LoadOrInitWorld(UWorld* World);
 
 	void SerializeLevel(ULevel* Level);
+	void SerializeWorldWhenRemoved(UWorld* World);
 
 	void WhenLevelInited(ULevel* Level) { OnLevelInitedNative.Broadcast(Level); }
 	void WhenLevelLoaded(ULevel* Level) { OnLevelLoadedNative.Broadcast(Level); }
@@ -71,6 +73,9 @@ protected:
 public:
 	UFUNCTION(BlueprintCallable, Category = "游戏序列化")
 	void ArchiveWorldAllState(UWorld* World);
+
+	UFUNCTION(BlueprintCallable, Category = "游戏序列化")
+	void OpenWorld(TSoftObjectPtr<UWorld> ToWorld);
 	
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnLevelInitedNative, ULevel*);
 	FOnLevelInitedNative OnLevelInitedNative;
@@ -81,8 +86,10 @@ public:
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnLevelPreSaveNative, ULevel*);
 	FOnLevelPreSaveNative OnLevelPreSaveNative;
 private:
-	FDelegateHandle OnGameModeInitialized_DelegateHandle;
 	FDelegateHandle OnLevelAdd_DelegateHandle;
+	FDelegateHandle OnWorldCleanup_DelegateHandle;
+	FDelegateHandle OnGameModeInitialized_DelegateHandle;
+	FDelegateHandle OnGameModeLogout_DelegateHandle;
 	uint8 bIsEnable : 1;
 	uint8 bInvokeLoadGame : 1;
 	uint8 bShouldInitSpawnActor : 1;
@@ -104,7 +111,4 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "游戏序列化")
 	APawn* LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, AController* NewPlayer, const FTransform& SpawnTransform);
 	void SerializePlayer(APlayerController* Player);
-private:
-	UFUNCTION()
-	void OnPlayerPawnEndPlay(AActor* Controller, EEndPlayReason::Type EndPlayReason);
 };

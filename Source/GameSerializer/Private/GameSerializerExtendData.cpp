@@ -41,11 +41,23 @@ void UGameSerializerExtendDataFunctionLibrary::DefaultPostLoadGame(UObject* Inst
 	}
 }
 
+void FActorGameSerializerExtendData::SaveData(const AActor* Actor)
+{
+	Owner = Actor->GetOwner();
+	Instigator = Actor->GetInstigator();
+}
+
+void FActorGameSerializerExtendData::LoadData(AActor* Actor) const
+{
+	Actor->SetOwner(Owner);
+	Actor->SetInstigator(Instigator);
+}
+
 FGameSerializerExtendDataContainer FActorGameSerializerExtendDataFactory::WhenGamePreSave(UObject* Instance)
 {
 	AActor* Actor = CastChecked<AActor>(Instance);
 	FActorGameSerializerExtendData ExtendData;
-	ExtendData.Owner = Actor->GetOwner();
+	ExtendData.SaveData(Actor);
 	return FGameSerializerExtendDataContainer::Make(ExtendData);
 }
 
@@ -53,5 +65,5 @@ void FActorGameSerializerExtendDataFactory::WhenGamePostLoad(UObject* Instance, 
 {
 	AActor* Actor = CastChecked<AActor>(Instance);
 	const FActorGameSerializerExtendData& ActorExtendData = ExtendData.Get<FActorGameSerializerExtendData>();
-	Actor->SetOwner(ActorExtendData.Owner);
+	ActorExtendData.LoadData(Actor);
 }
