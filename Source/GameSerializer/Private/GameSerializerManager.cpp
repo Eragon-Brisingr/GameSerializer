@@ -152,6 +152,11 @@ void UGameSerializerManager::EnableSystem()
 
 			APlayerController* Player = CastChecked<APlayerController>(Exiting);
 			SerializePlayer(Player);
+			if (PlayerDataMap.Contains(Player) == false)
+			{
+				return;
+			}
+			
 			const FPlayerData PlayerData = PlayerDataMap.FindAndRemoveChecked(Player);
 			if (APawn* Pawn = PlayerData.OriginPawn.Get())
 			{
@@ -180,6 +185,8 @@ void UGameSerializerManager::DisableSystem()
 void UGameSerializerManager::DisableAutoSave()
 {
 	LoadedWorld = nullptr;
+	LoadedLevels.Empty();
+	PlayerDataMap.Empty();
 }
 
 bool UGameSerializerManager::IsArchiveWorld(UWorld* World) const
@@ -256,15 +263,13 @@ void UGameSerializerManager::SaveJsonObject(UWorld* World, const TSharedRef<FJso
 
 void UGameSerializerManager::InitActorAndComponents(AActor* Actor)
 {
-	if (bShouldInitSpawnActor && Actor->Implements<UActorGameSerializerInterface>())
+	check(Actor->Implements<UActorGameSerializerInterface>());
+	IActorGameSerializerInterface::WhenGameInit(Actor);
+	for (UActorComponent* Component : Actor->GetComponents())
 	{
-		IActorGameSerializerInterface::WhenGameInit(Actor);
-		for (UActorComponent* Component : Actor->GetComponents())
+		if (Component->Implements<UComponentGameSerializerInterface>())
 		{
-			if (Component->Implements<UComponentGameSerializerInterface>())
-			{
-				IComponentGameSerializerInterface::WhenGameInit(Component);
-			}
+			IComponentGameSerializerInterface::WhenGameInit(Component);
 		}
 	}
 }
@@ -336,7 +341,9 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 		WhenLevelLoaded(Level);
 		return;
 	}
-	
+
+	UWorld* World = Level->GetWorld();
+	const bool IsMainLevel = World->PersistentLevel == Level;
 	if (bInvokeLoadGame)
 	{
 		TOptional<TSharedRef<FJsonObject>> JsonObject = TryLoadJsonObject(Level->GetWorld(), TEXT("Levels"), *LevelName);
@@ -364,8 +371,6 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 			const FIntVector OldWorldOrigin = LevelDeserializer.GetStruct<FIntVector>(JsonFieldName::WorldOrigin);
 			TGuardValue<FIntVector> WorldOffsetGuard(GameSerializerContext::WorldOffset, OldWorldOrigin - Level->GetWorld()->OriginLocation);
 
-			UWorld* World = Level->GetWorld();
-			const bool IsMainLevel = World->PersistentLevel == Level;
 			if (IsMainLevel)
 			{
 				LevelDeserializer.RetargetDynamicObjectName(JsonFieldName::GameState, World->GetGameState()->GetFName());
@@ -393,10 +398,20 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 		GameSerializerStatLog(STAT_GameSerializerManage_InitLevel);
 		
 		UE_LOG(GameSerializer_Log, Display, TEXT("初始化关卡[%s]"), *LevelName);
+		
+		if (IsMainLevel)
+		{
+			AGameStateBase* GameState = World->GetGameState();
+			if (GameState->Implements<UActorGameSerializerInterface>())
+			{
+				InitActorAndComponents(GameState);
+			}
+		}
+		
 		for (int32 Idx = 0; Idx < Level->Actors.Num(); ++Idx)
 		{
 			AActor* Actor = Level->Actors[Idx];
-			if (IsValid(Actor))
+			if (IsValid(Actor) && Actor->Implements<UActorGameSerializerInterface>() && IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
 			{
 				InitActorAndComponents(Actor);
 			}
@@ -485,7 +500,13 @@ void UGameSerializerManager::LoadOrInitWorld(UWorld* World)
 		LoadOrInitLevel(Level);
 	}
 
-	World->AddOnActorSpawnedHandler(FOnActorSpawned::FDelegate::CreateUObject(this, &UGameSerializerManager::InitActorAndComponents));
+	World->AddOnActorSpawnedHandler(FOnActorSpawned::FDelegate::CreateWeakLambda(this, [this](AActor* Actor)
+	{
+		if (bShouldInitSpawnActor && Actor->Implements<UActorGameSerializerInterface>() && IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
+		{
+			InitActorAndComponents(Actor);
+		}
+	}));
 }
 
 void UGameSerializerManager::SerializeLevel(ULevel* Level)
@@ -658,14 +679,34 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 		TGuardValue<FIntVector> WorldOffsetGuard(GameSerializerContext::WorldOffset, OldWorldOrigin - Pawn->GetWorld()->OriginLocation);
 		PlayerDeserializer.LoadAllDataImmediately();
 	}
+	else
+	{
+		if (PlayerController->Implements<UActorGameSerializerInterface>())
+		{
+			InitActorAndComponents(PlayerController);
+		}
+		if (PlayerState->Implements<UActorGameSerializerInterface>())
+		{
+			InitActorAndComponents(PlayerState);
+		}
+		if (Pawn->Implements<UActorGameSerializerInterface>())
+		{
+			InitActorAndComponents(Pawn);
+		}
+	}
 	
 	return Pawn;
 }
 
 void UGameSerializerManager::SerializePlayer(APlayerController* Player)
 {
-	const FPlayerData& PlayerData = PlayerDataMap.FindChecked(Player);
-	APawn* Pawn = PlayerData.OriginPawn.Get(true);
+	const FPlayerData* PlayerData = PlayerDataMap.Find(Player);
+	if (PlayerData == nullptr)
+	{
+		return;
+	}
+	
+	APawn* Pawn = PlayerData->OriginPawn.Get(true);
 	if (ensure(Pawn))
 	{
 		struct FPlayerSerializer : public GameSerializerCore::FStructToJson
@@ -678,7 +719,7 @@ void UGameSerializerManager::SerializePlayer(APlayerController* Player)
 		FPlayerSerializer PlayerSerializer;
 		PlayerSerializer.AddStruct(JsonFieldName::WorldOrigin, Pawn->GetWorld()->OriginLocation);
 		PlayerSerializer.AddObject(JsonFieldName::PlayerController, Player);
-		PlayerSerializer.AddObject(JsonFieldName::PlayerState, PlayerData.PlayerState.Get(true));
+		PlayerSerializer.AddObject(JsonFieldName::PlayerState, PlayerData->PlayerState.Get(true));
 		PlayerSerializer.AddObject(JsonFieldName::PlayerPawn, Pawn);
 
 		SaveJsonObject(Pawn->GetWorld(), PlayerSerializer.GetResultJson(), TEXT("Players"), *Pawn->GetName());
