@@ -152,20 +152,7 @@ void UGameSerializerManager::EnableSystem()
 
 			APlayerController* Player = CastChecked<APlayerController>(Exiting);
 			SerializePlayer(Player);
-			if (PlayerDataMap.Contains(Player) == false)
-			{
-				return;
-			}
-			
-			const FPlayerData PlayerData = PlayerDataMap.FindAndRemoveChecked(Player);
-			if (APawn* Pawn = PlayerData.OriginPawn.Get())
-			{
-				Pawn->MarkPendingKill();
-			}
-			if (APlayerState* PlayerState = PlayerData.PlayerState.Get())
-			{
-				PlayerState->MarkPendingKill();
-			}
+			PlayerDataMap.Remove(Player);
 		});
 	}
 }
@@ -358,7 +345,7 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 			TArray<AActor*> PrepareLoadActors;
 			for (AActor* Actor : Level->Actors)
 			{
-				if (Actor && Actor->GetOwner() == nullptr && Actor->Implements<UActorGameSerializerInterface>())
+				if (Actor && Actor->Implements<UActorGameSerializerInterface>())
 				{
 					if (IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
 					{
@@ -528,9 +515,9 @@ void UGameSerializerManager::SerializeLevel(ULevel* Level)
 	SerializeList.Reset(Level->Actors.Num());
 	for (AActor* Actor : Level->Actors)
 	{
-		if (IsValid(Actor) && Actor->Implements<UActorGameSerializerInterface>())
+		if (IsValid(Actor) && Actor->HasAnyFlags(RF_Transient) == false && Actor->Implements<UActorGameSerializerInterface>())
 		{
-			if (IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
+			if (IActorGameSerializerInterface::GetGameSerializedOwner(Actor) == nullptr && IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
 			{
 				SerializeList.Add(Actor);
 			}
@@ -563,18 +550,6 @@ void UGameSerializerManager::SerializeLevel(ULevel* Level)
 void UGameSerializerManager::SerializeWorldWhenRemoved(UWorld* World)
 {
 	check(LoadedWorld == World);
-	for (const TPair<TWeakObjectPtr<APlayerController>, FPlayerData>& Pair : PlayerDataMap)
-	{
-		const FPlayerData& PlayerData = Pair.Value;
-		if (APawn* Pawn = PlayerData.OriginPawn.Get())
-		{
-			Pawn->MarkPendingKill();
-		}
-		if (APlayerState* PlayerState = PlayerData.PlayerState.Get())
-		{
-			PlayerState->MarkPendingKill();
-		}
-	}
 	ArchiveWorldAllState(World);
 	PlayerDataMap.Empty();
 	LoadedLevels.Empty();

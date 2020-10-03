@@ -1027,7 +1027,8 @@ namespace GameSerializerCore
 				{
 					for (FObjectIdx Idx = OuterChain.Num() - 1; Idx >= 0; --Idx)
 					{
-						if (SubActor->GetOwner() == OuterChain[Idx].Outer)
+						AActor* SubActorOwner = IActorGameSerializerInterface::GetGameSerializedOwner(SubActor);
+						if (SubActorOwner == OuterChain[Idx].Outer)
 						{
 							const TSharedRef<FJsonObject> SubActorJsonObject = MakeShared<FJsonObject>();
 							const FObjectIdx ObjectIdx = ObjectToJsonObject(SubActorJsonObject, SubObject);

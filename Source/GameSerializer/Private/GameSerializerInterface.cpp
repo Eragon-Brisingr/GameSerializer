@@ -5,13 +5,6 @@
 
 #include "GameSerializer_Log.h"
 
-#if !UE_BUILD_SHIPPING
-namespace GameSerializer
-{
-	bool bIsCustomGameInitFunction = false;
-}
-#endif
-
 FGameSerializerExtendDataContainer IGameSerializerInterface::WhenGamePreSave_Implementation()
 {
 	return FGameSerializerExtendDataContainer();
@@ -46,9 +39,7 @@ void IGameSerializerInterface::WhenGamePostLoad(UObject* Obj, const FGameSeriali
 
 void IComponentGameSerializerInterface::WhenGameInit_Implementation()
 {
-#if !UE_BUILD_SHIPPING
-	GameSerializer::bIsCustomGameInitFunction = false;
-#endif
+
 }
 
 void IGameSerializerInterface::WhenGamePostLoad_Implementation(const FGameSerializerExtendDataContainer& ExtendData)
@@ -62,41 +53,49 @@ void IGameSerializerInterface::DefaultWhenGamePostLoad(const FGameSerializerExte
 	UGameSerializerExtendDataFunctionLibrary::DefaultPostLoadGame(Self, ExtendData);
 }
 
-void IComponentGameSerializerInterface::WhenGameInit(UObject* Obj)
+void IComponentGameSerializerInterface::WhenGameInit(UActorComponent* ActorComponent)
 {
-#if !UE_BUILD_SHIPPING
-	using namespace GameSerializer;
-	TGuardValue<bool> IsCustomGameInitFunctionGuardValue(bIsCustomGameInitFunction, true);
-#endif
 	FEditorScriptExecutionGuard EditorScriptExecutionGuard;
-	Execute_WhenGameInit(Obj);
-#if !UE_BUILD_SHIPPING
-	if (bIsCustomGameInitFunction)
-	{
-		UE_LOG(GameSerializer_Log, Display, TEXT("  %s 执行初始化"), *Obj->GetName());
-	}
-#endif
+	Execute_WhenGameInit(ActorComponent);
 }
 
 void IActorGameSerializerInterface::WhenGameInit_Implementation()
 {
-#if !UE_BUILD_SHIPPING
-	GameSerializer::bIsCustomGameInitFunction = false;
-#endif
+
 }
 
-void IActorGameSerializerInterface::WhenGameInit(UObject* Obj)
+void IActorGameSerializerInterface::WhenGameInit(AActor* Actor)
 {
-#if !UE_BUILD_SHIPPING
-	using namespace GameSerializer;
-	TGuardValue<bool> IsCustomGameInitFunctionGuardValue(bIsCustomGameInitFunction, true);
-#endif
 	FEditorScriptExecutionGuard EditorScriptExecutionGuard;
-	Execute_WhenGameInit(Obj);
-#if !UE_BUILD_SHIPPING
-	if (bIsCustomGameInitFunction)
+	Execute_WhenGameInit(Actor);
+}
+
+AActor* IActorGameSerializerInterface::GetGameSerializedOwner_Implementation() const
+{
+	return CastChecked<AActor>(this)->GetOwner();
+}
+
+AActor* IActorGameSerializerInterface::GetGameSerializedOwner(const AActor* Actor)
+{
+	if (Actor->Implements<UActorGameSerializerInterface>())
 	{
-		UE_LOG(GameSerializer_Log, Display, TEXT("%s 执行初始化"), *Obj->GetName());
+		FEditorScriptExecutionGuard EditorScriptExecutionGuard;
+		return Execute_GetGameSerializedOwner(Actor);
 	}
-#endif
+	return Actor->GetOwner();
+}
+
+void IActorGameSerializerInterface::SetGameSerializedOwner_Implementation(AActor* GameSerializedOwner)
+{
+	CastChecked<AActor>(this)->SetOwner(GameSerializedOwner);
+}
+
+void IActorGameSerializerInterface::SetGameSerializedOwner(AActor* Actor, AActor* GameSerializedOwner)
+{
+	if (Actor->Implements<UActorGameSerializerInterface>())
+	{
+		FEditorScriptExecutionGuard EditorScriptExecutionGuard;
+		Execute_SetGameSerializedOwner(Actor, GameSerializedOwner);
+	}
+	Actor->SetOwner(GameSerializedOwner);
 }

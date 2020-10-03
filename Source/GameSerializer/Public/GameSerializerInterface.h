@@ -44,7 +44,7 @@ public:
 	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
 	void WhenGameInit();
 	virtual void WhenGameInit_Implementation();
-	static void WhenGameInit(UObject* Obj);
+	static void WhenGameInit(UActorComponent* ActorComponent);
 };
 
 UINTERFACE(MinimalAPI)
@@ -60,10 +60,20 @@ public:
 	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
 	void WhenGameInit();
 	virtual void WhenGameInit_Implementation();
-	static void WhenGameInit(UObject* Obj);
+	static void WhenGameInit(AActor* Actor);
 
 	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
 	bool CanGameSerializedInLevel() const;
 	virtual bool CanGameSerializedInLevel_Implementation() const { return true; }
-	static bool CanGameSerializedInLevel(UObject* Obj) { return Execute_CanGameSerializedInLevel(Obj); }
+	static bool CanGameSerializedInLevel(AActor* Actor) { return Execute_CanGameSerializedInLevel(Actor); }
+
+	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
+	AActor* GetGameSerializedOwner() const;
+	virtual AActor* GetGameSerializedOwner_Implementation() const;
+	static AActor* GetGameSerializedOwner(const AActor* Actor);
+
+	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
+	void SetGameSerializedOwner(AActor* GameSerializedOwner);
+	virtual void SetGameSerializedOwner_Implementation(AActor* GameSerializedOwner);
+	static void SetGameSerializedOwner(AActor* Actor, AActor* GameSerializedOwner);
 };

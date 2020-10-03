@@ -3,6 +3,8 @@
 
 #include "GameSerializerExtendData.h"
 
+#include "GameSerializerInterface.h"
+
 
 namespace GameSerializerExtendDataFactory
 {
@@ -43,13 +45,13 @@ void UGameSerializerExtendDataFunctionLibrary::DefaultPostLoadGame(UObject* Inst
 
 void FActorGameSerializerExtendData::SaveData(const AActor* Actor)
 {
-	Owner = Actor->GetOwner();
+	GameSerializerOwner = IActorGameSerializerInterface::GetGameSerializedOwner(Actor);
 	Instigator = Actor->GetInstigator();
 }
 
 void FActorGameSerializerExtendData::LoadData(AActor* Actor) const
 {
-	Actor->SetOwner(Owner);
+	IActorGameSerializerInterface::SetGameSerializedOwner(Actor, GameSerializerOwner);
 	Actor->SetInstigator(Instigator);
 }
 
