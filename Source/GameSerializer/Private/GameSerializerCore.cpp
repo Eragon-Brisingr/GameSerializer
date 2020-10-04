@@ -1181,7 +1181,19 @@ namespace GameSerializerCore
 		}
 	}
 
-	DECLARE_CYCLE_STAT(TEXT("JsonToStruct_LoadDynamicObjectExtendData"), STAT_JsonToStruct_LoadDynamicObjectExtendData, STATGROUP_GameSerializer);
+	void FJsonToStruct::RestoreDynamicActorSpawnedData()
+	{
+		for (const FSpawnedActorData& ActorData : SpawnedActors)
+		{
+			if (AActor* Actor = ActorData.SpawnedActor.Get())
+			{
+				Actor->bNetLoadOnClient = ActorData.bNetLoadOnClient;
+			}
+		}
+	}
+
+	DECLARE_CYCLE_STAT(TEXT("JsonToStruct_LoadDynamicObjectExtendData"), STAT_JsonToStruct_LoadDynamicObjectExtendData,
+	                   STATGROUP_GameSerializer);
 	void FJsonToStruct::LoadDynamicObjectExtendData()
 	{
 		GameSerializerStatLog(STAT_JsonToStruct_LoadDynamicObjectExtendData);
@@ -1273,6 +1285,8 @@ namespace GameSerializerCore
 				UWorld* World = Level->GetWorld();
 				AActor* Actor = World->SpawnActor<AActor>(ObjectClass, ActorTransform, ActorSpawnParameters);
 				FSpawnedActorData& SpawnedActorData = SpawnedActors.AddDefaulted_GetRef();
+				SpawnedActorData.bNetLoadOnClient = Actor->bNetLoadOnClient;
+				Actor->bNetLoadOnClient = false;
 				SpawnedActorData.SpawnedActor = Actor;
 
 				// Spawn的蓝图Actor需要优先构造Component

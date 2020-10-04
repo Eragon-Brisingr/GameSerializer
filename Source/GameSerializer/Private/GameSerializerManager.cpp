@@ -322,6 +322,7 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 		UE_LOG(GameSerializer_Log, Display, TEXT("完成流式关卡[%s]加载"), *LevelName);
 		
 		FLevelDeserializer& FLevelDeserializer = StreamLoadedLevelDeserializerPtr->Get();
+		FLevelDeserializer.RestoreDynamicActorSpawnedData();
 		FLevelDeserializer.LoadDynamicObjectExtendData();
 
 		StreamLoadedLevelDataMap.Remove(Level);

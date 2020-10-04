@@ -84,12 +84,13 @@ namespace GameSerializerCore
 		
 		FJsonToStruct(UObject* Outer, const TSharedRef<FJsonObject>& RootJsonObject);
 
-		void LoadAllDataImmediately() { LoadExternalObject(); InstanceDynamicObject(); LoadDynamicObjectJsonData(); DynamicActorFinishSpawning(); LoadDynamicObjectExtendData(); }
+		void LoadAllDataImmediately() { LoadExternalObject(); InstanceDynamicObject(); LoadDynamicObjectJsonData(); DynamicActorFinishSpawning(); RestoreDynamicActorSpawnedData(); LoadDynamicObjectExtendData(); }
 		
 		void LoadExternalObject();
 		void InstanceDynamicObject();
 		void LoadDynamicObjectJsonData();
 		void DynamicActorFinishSpawning();
+		void RestoreDynamicActorSpawnedData();
 		void LoadDynamicObjectExtendData();
 
 		void RetargetDynamicObjectName(const FString& FieldName, const FName& NewName);
@@ -116,6 +117,9 @@ namespace GameSerializerCore
 		struct FSpawnedActorData
 		{
 			TWeakObjectPtr<AActor> SpawnedActor;
+			// 在关卡进行流式加载完毕前动态Spawn的Actor会在ULevel::InitializeNetworkActors被判断为稳定命名对象（bNetStartup）
+			// 通过设置bNetLoadOnClient跳过bNetStartup设置
+			uint8 bNetLoadOnClient : 1;
 		};
 		TArray<FSpawnedActorData> SpawnedActors;
 
