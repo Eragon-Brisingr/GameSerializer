@@ -7,6 +7,7 @@
 #include <Misc/ScopeExit.h>
 #include <Engine/SimpleConstructionScript.h>
 #include <Engine/SCS_Node.h>
+#include <Engine/LevelScriptActor.h>
 
 #include "GameSerializerInterface.h"
 #include "GameSerializer_Log.h"
@@ -250,6 +251,15 @@ namespace CustomJsonConverter
 				// Default to export as string for everything else
 				FString StringValue;
 				Property->ExportTextItem(StringValue, Value, DefaultValue, nullptr, PPF_None);
+
+				// TODO：通过比较String差异的检查比较耗，考虑用比较case中不存在的类型
+				if (DefaultValue)
+				{
+					FString DefaultStringValue;
+					Property->ExportTextItem(DefaultStringValue, DefaultValue, nullptr, nullptr, PPF_None);
+					bSameValue = DefaultStringValue == StringValue;
+				}
+				
 				return MakeShared<FJsonValueString>(StringValue);
 			}
 
@@ -1192,8 +1202,7 @@ namespace GameSerializerCore
 		}
 	}
 
-	DECLARE_CYCLE_STAT(TEXT("JsonToStruct_LoadDynamicObjectExtendData"), STAT_JsonToStruct_LoadDynamicObjectExtendData,
-	                   STATGROUP_GameSerializer);
+	DECLARE_CYCLE_STAT(TEXT("JsonToStruct_LoadDynamicObjectExtendData"), STAT_JsonToStruct_LoadDynamicObjectExtendData, STATGROUP_GameSerializer);
 	void FJsonToStruct::LoadDynamicObjectExtendData()
 	{
 		GameSerializerStatLog(STAT_JsonToStruct_LoadDynamicObjectExtendData);
@@ -1260,7 +1269,8 @@ namespace GameSerializerCore
 		
 		if (Object)
 		{
-			ensure(Object->IsA(ObjectClass));
+			// LevelScriptActor的子类在PIE模式下无法做合法性检测，跳过
+			ensure(Object->IsA<ALevelScriptActor>() || Object->IsA(ObjectClass));
 			if (AActor* Actor = Cast<AActor>(Object))
 			{
 				FTransform ActorTransform = GetStruct<FTransform>(JsonObject, ActorTransformFieldName);
