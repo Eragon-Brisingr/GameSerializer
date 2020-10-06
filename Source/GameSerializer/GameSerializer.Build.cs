@@ -44,8 +44,15 @@ public class GameSerializer : ModuleRules
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);
-		
-		
+
+		if (Target.Type == TargetType.Editor)
+		{
+			PrivateDependencyModuleNames.AddRange(new string[]
+			{
+				"UnrealEd"
+			});
+		}
+
 		DynamicallyLoadedModuleNames.AddRange(
 			new string[]
 			{

@@ -8,6 +8,10 @@
 #include <Engine/SimpleConstructionScript.h>
 #include <Engine/SCS_Node.h>
 #include <Engine/LevelScriptActor.h>
+#include <Dom/JsonObject.h>
+#include <Policies/CondensedJsonPrintPolicy.h>
+#include <Serialization/JsonSerializer.h>
+#include <Serialization/JsonWriter.h>
 
 #include "GameSerializerInterface.h"
 #include "GameSerializer_Log.h"

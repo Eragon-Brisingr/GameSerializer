@@ -90,6 +90,9 @@ private:
 	FDelegateHandle OnWorldCleanup_DelegateHandle;
 	FDelegateHandle OnGameModeInitialized_DelegateHandle;
 	FDelegateHandle OnGameModeLogout_DelegateHandle;
+#if WITH_EDITORONLY_DATA
+	FDelegateHandle PrePIEEnded_DelegateHandle;
+#endif
 	uint8 bIsEnable : 1;
 	uint8 bInvokeLoadGame : 1;
 	uint8 bShouldInitSpawnActor : 1;

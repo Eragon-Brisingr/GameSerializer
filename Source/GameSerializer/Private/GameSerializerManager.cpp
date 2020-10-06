@@ -8,6 +8,10 @@
 #include <GameFramework/GameModeBase.h>
 #include <Engine/LevelStreaming.h>
 #include <GameFramework/GameStateBase.h>
+#include <GameFramework/WorldSettings.h>
+#if WITH_EDITOR
+#include <Editor.h>
+#endif
 
 #include "GameSerializer_Log.h"
 #include "GameSerializerCore.h"
@@ -108,6 +112,17 @@ void UGameSerializerManager::EnableSystem()
 			}
 		}
 
+#if WITH_EDITOR
+		PrePIEEnded_DelegateHandle = FEditorDelegates::PrePIEEnded.AddWeakLambda(this, [this](const bool)
+		{
+			if (UWorld* World = LoadedWorld.Get())
+			{
+				UE_LOG(GameSerializer_Log, Display, TEXT("结束PlayInEditor，储存整个世界[%s]"), *World->GetName());
+				SerializeWorldWhenRemoved(World);
+			}
+		});
+#endif
+
 		OnLevelAdd_DelegateHandle = FWorldDelegates::LevelAddedToWorld.AddWeakLambda(this, [this](ULevel* Level, UWorld* World)
 		{
 			if (bIsEnable == false || IsArchiveWorld(World) == false)
@@ -166,6 +181,9 @@ void UGameSerializerManager::DisableSystem()
 		FWorldDelegates::OnWorldCleanup.Remove(OnWorldCleanup_DelegateHandle);
 		FGameModeEvents::GameModeInitializedEvent.Remove(OnGameModeInitialized_DelegateHandle);
 		FGameModeEvents::OnGameModeLogoutEvent().Remove(OnGameModeLogout_DelegateHandle);
+#if WITH_EDITOR
+		FEditorDelegates::PrePIEEnded.Remove(PrePIEEnded_DelegateHandle);
+#endif
 	}
 }
 

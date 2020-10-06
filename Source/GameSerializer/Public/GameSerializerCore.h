@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
+#include <Dom/JsonValue.h>
 // #include "GameSerializerCore.generated.h"
 
 /**
