@@ -966,7 +966,8 @@ namespace GameSerializerCore
 			const FObjectIdx StructIdx = GetExternalObjectIndex(ExtendDataContainer.Struct);
 			ExtendDataContainerJsonObject->SetNumberField(ExtendDataTypeFieldName, StructIdx);
 
-			FGameSerializerExtendData* DefaultExtendData = static_cast<FGameSerializerExtendData*>(FMemory::Malloc(ExtendDataContainer.Struct->GetStructureSize()));
+			const UScriptStruct* Struct = ExtendDataContainer.Struct;
+			FGameSerializerExtendData* DefaultExtendData = static_cast<FGameSerializerExtendData*>(FMemory::Malloc(Struct->GetStructureSize(), Struct->GetMinAlignment()));
 			ExtendDataContainer.Struct->InitializeStruct(DefaultExtendData);
 			bool bSubObjectSameValue;
 			ensure(StructToJson::UStructToJsonAttributes(ExtendDataContainer.Struct, ExtendDataContainer.ExtendData.Get(), DefaultExtendData, bSubObjectSameValue, ExtendDataContainerJsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));

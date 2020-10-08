@@ -621,14 +621,27 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 	check(PlayerState);
 	
 	FGuardValue_Bitfield(PlayerState->bUseCustomPlayerNames, true);
-	const FString PlayerName = PlayerState->GetPlayerName();
+	FString PlayerName = PlayerState->GetPlayerName();
+	ULevel* SpawnLevel = World->PersistentLevel;
+	if (APawn* ExistedPawn = FindObject<APawn>(SpawnLevel, *PlayerName))
+	{
+		if (ExistedPawn->IsPendingKill())
+		{
+			ExistedPawn->Rename(nullptr, GetTransientPackage());
+		}
+		else
+		{
+			ensure(false);
+			PlayerName = MakeUniqueObjectName(SpawnLevel, APawn::StaticClass(), *PlayerName).ToString();
+		}
+	}
 
 	TOptional<TSharedRef<FJsonObject>> JsonObject = bInvokeLoadGame ? TryLoadJsonObject(World, TEXT("Players"), *PlayerName) : TOptional<TSharedRef<FJsonObject>>();
-	
 	FGuardValue_Bitfield(bShouldInitSpawnActor, bInvokeLoadGame ? JsonObject.IsSet() == false : true);
 	FActorSpawnParameters SpawnInfo;
 	SpawnInfo.Name = *PlayerName;
 	SpawnInfo.Instigator = GameMode->GetInstigator();
+	SpawnInfo.OverrideLevel = SpawnLevel;
 	SpawnInfo.ObjectFlags |= RF_Transient;	// We never want to save default player pawns into a map
 	UClass* PawnClass = GameMode->GetDefaultPawnClassForController(NewPlayer);
 	APawn* Pawn = World->SpawnActor<APawn>(PawnClass, SpawnTransform, SpawnInfo);

@@ -44,7 +44,7 @@ public:
 	template<typename T>
 	const T& Get() const
 	{
-		if (ensure(Struct->IsChildOf(T::StaticStruct())))
+		if (Struct && ensure(Struct->IsChildOf(T::StaticStruct())))
 		{
 			return static_cast<const T&>(*ExtendData.Get());
 		}
