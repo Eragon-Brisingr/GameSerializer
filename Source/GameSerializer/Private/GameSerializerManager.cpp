@@ -632,7 +632,30 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 		else
 		{
 			ensure(false);
+
+			// 非Shipping提供个稳定的命名，用于调试
+#if !UE_BUILD_SHIPPING
+			int32 UniqueIdx = 0;
+			FString TestName;
+			while (true)
+			{
+				TestName = FName(*PlayerName, UniqueIdx).ToString();
+				ExistedPawn = FindObject<APawn>(SpawnLevel, *TestName);
+				if (ExistedPawn == nullptr)
+				{
+					break;
+				}
+				if (ExistedPawn->IsPendingKill())
+				{
+					ExistedPawn->Rename(nullptr, GetTransientPackage());
+					break;
+				}
+				++UniqueIdx;
+			}
+			PlayerName = TestName;
+#else
 			PlayerName = MakeUniqueObjectName(SpawnLevel, APawn::StaticClass(), *PlayerName).ToString();
+#endif
 		}
 	}
 
