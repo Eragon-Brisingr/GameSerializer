@@ -1045,7 +1045,11 @@ namespace GameSerializerCore
 						AActor* SubActorOwner = IActorGameSerializerInterface::GetGameSerializedOwner(SubActor);
 						if (SubActorOwner == OuterChain[Idx].Outer)
 						{
+							// SubActor的命名约定要存在Owner的名称，避免读档时已经存在重名的Actor（不由Owner生成的）
+							ensure(SubActor->GetName().Contains(SubActorOwner->GetName()));
+							
 							const TSharedRef<FJsonObject> SubActorJsonObject = MakeShared<FJsonObject>();
+							SubActorJsonObject->SetNumberField(ActorOwnerFieldName, ObjectIdxMap[SubActorOwner]);
 							const FObjectIdx ObjectIdx = ObjectToJsonObject(SubActorJsonObject, SubObject);
 							
 							DynamicJsonObject->SetObjectField(FString::FromInt(ObjectIdx), SubActorJsonObject);
@@ -1167,9 +1171,24 @@ namespace GameSerializerCore
 		for (const FInstancedObjectData& InstancedObjectData : InstancedObjectDatas)
 		{
 			UClass* Class = InstancedObjectData.Object->GetClass();
-			UObject* LoadedObject = InstancedObjectData.Object;
+			UObject* LoadedObject = InstancedObjectData.Object.Get();
+			if (Class && LoadedObject)
+			{
+				if (AActor* Actor = Cast<AActor>(LoadedObject))
+				{
+					FObjectIdx OwnerIdx;
+					if (InstancedObjectData.JsonObject->TryGetNumberField(ActorOwnerFieldName, OwnerIdx))
+					{
+						AActor* Owner = Cast<AActor>(GetObjectByIdx(OwnerIdx));
+						if (ensure(Owner))
+						{
+							IActorGameSerializerInterface::SetGameSerializedOwner(Actor, Owner);
+						}
+					}
+				}
 
-			ensure(JsonToStruct::JsonAttributesToUStructWithContainer(InstancedObjectData.JsonObject->Values, Class, LoadedObject, Class, LoadedObject, CheckFlags, SkipFlags, FCustomImportCallback::CreateRaw(this, &FJsonToStruct::JsonObjectIdxToObject)));
+				ensure(JsonToStruct::JsonAttributesToUStructWithContainer(InstancedObjectData.JsonObject->Values, Class, LoadedObject, Class, LoadedObject, CheckFlags, SkipFlags, FCustomImportCallback::CreateRaw(this, &FJsonToStruct::JsonObjectIdxToObject)));
+			}
 		}
 	}
 
@@ -1214,22 +1233,24 @@ namespace GameSerializerCore
 
 		for (const FInstancedObjectData& InstancedObjectData : InstancedObjectDatas)
 		{
-			UObject* LoadedObject = InstancedObjectData.Object;
-			const TSharedPtr<FJsonObject>* ExtendDataJsonObject;
-			if (InstancedObjectData.JsonObject->TryGetObjectField(ExtendDataFieldName, ExtendDataJsonObject))
+			if (UObject* LoadedObject = InstancedObjectData.Object.Get())
 			{
-				UScriptStruct* Struct = CastChecked<UScriptStruct>(ExternalObjectsArray[-int32(ExtendDataJsonObject->Get()->GetNumberField(ExtendDataTypeFieldName))]);
-				FGameSerializerExtendData* ExtendData = static_cast<FGameSerializerExtendData*>(FMemory::Malloc(Struct->GetStructureSize()));
-				Struct->InitializeStruct(ExtendData);
-				ensure(JsonToStruct::JsonAttributesToUStructWithContainer(ExtendDataJsonObject->Get()->Values, Struct, ExtendData, Struct, ExtendData, CheckFlags, SkipFlags, FCustomImportCallback::CreateRaw(this, &FJsonToStruct::JsonObjectIdxToObject)));
-				FGameSerializerExtendDataContainer DataContainer;
-				DataContainer.Struct = Struct;
-				DataContainer.ExtendData = MakeShareable(ExtendData);
-				IGameSerializerInterface::WhenGamePostLoad(LoadedObject, DataContainer);
-			}
-			else
-			{
-				IGameSerializerInterface::WhenGamePostLoad(LoadedObject, FGameSerializerExtendDataContainer());
+				const TSharedPtr<FJsonObject>* ExtendDataJsonObject;
+				if (InstancedObjectData.JsonObject->TryGetObjectField(ExtendDataFieldName, ExtendDataJsonObject))
+				{
+					UScriptStruct* Struct = CastChecked<UScriptStruct>(ExternalObjectsArray[-int32(ExtendDataJsonObject->Get()->GetNumberField(ExtendDataTypeFieldName))]);
+					FGameSerializerExtendData* ExtendData = static_cast<FGameSerializerExtendData*>(FMemory::Malloc(Struct->GetStructureSize()));
+					Struct->InitializeStruct(ExtendData);
+					ensure(JsonToStruct::JsonAttributesToUStructWithContainer(ExtendDataJsonObject->Get()->Values, Struct, ExtendData, Struct, ExtendData, CheckFlags, SkipFlags, FCustomImportCallback::CreateRaw(this, &FJsonToStruct::JsonObjectIdxToObject)));
+					FGameSerializerExtendDataContainer DataContainer;
+					DataContainer.Struct = Struct;
+					DataContainer.ExtendData = MakeShareable(ExtendData);
+					IGameSerializerInterface::WhenGamePostLoad(LoadedObject, DataContainer);
+				}
+				else
+				{
+					IGameSerializerInterface::WhenGamePostLoad(LoadedObject, FGameSerializerExtendDataContainer());
+				}
 			}
 		}
 	}

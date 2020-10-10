@@ -45,13 +45,11 @@ void UGameSerializerExtendDataFunctionLibrary::DefaultPostLoadGame(UObject* Inst
 
 void FActorGameSerializerExtendData::SaveData(const AActor* Actor)
 {
-	GameSerializerOwner = IActorGameSerializerInterface::GetGameSerializedOwner(Actor);
 	Instigator = Actor->GetInstigator();
 }
 
 void FActorGameSerializerExtendData::LoadData(AActor* Actor) const
 {
-	IActorGameSerializerInterface::SetGameSerializedOwner(Actor, GameSerializerOwner);
 	Actor->SetInstigator(Instigator);
 }
 

@@ -126,7 +126,7 @@ namespace GameSerializerCore
 
 		struct FInstancedObjectData
 		{
-			UObject* Object;
+			TWeakObjectPtr<UObject> Object;
 			TSharedRef<FJsonObject> JsonObject;
 		};
 		TArray<FInstancedObjectData> InstancedObjectDatas;
