@@ -15,6 +15,8 @@ namespace GameSerializerContext
 	extern FIntVector WorldOffset;
 }
 
+struct FGameSerializerNetNotifyData;
+
 namespace GameSerializerCore
 {
 	using FObjectIdx = int32;
@@ -128,6 +130,7 @@ namespace GameSerializerCore
 		{
 			TWeakObjectPtr<UObject> Object;
 			TSharedRef<FJsonObject> JsonObject;
+			TArray<struct FGameSerializerNetNotifyData> NetNotifyDatas;
 		};
 		TArray<FInstancedObjectData> InstancedObjectDatas;
 

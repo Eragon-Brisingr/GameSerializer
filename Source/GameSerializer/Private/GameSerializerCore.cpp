@@ -970,7 +970,8 @@ namespace GameSerializerCore
 			FGameSerializerExtendData* DefaultExtendData = static_cast<FGameSerializerExtendData*>(FMemory::Malloc(Struct->GetStructureSize(), Struct->GetMinAlignment()));
 			ExtendDataContainer.Struct->InitializeStruct(DefaultExtendData);
 			bool bSubObjectSameValue;
-			ensure(StructToJson::UStructToJsonAttributes(ExtendDataContainer.Struct, ExtendDataContainer.ExtendData.Get(), DefaultExtendData, bSubObjectSameValue, ExtendDataContainerJsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
+			const bool IsSaveSucceed = StructToJson::UStructToJsonAttributes(ExtendDataContainer.Struct, ExtendDataContainer.ExtendData.Get(), DefaultExtendData, bSubObjectSameValue, ExtendDataContainerJsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson));
+			ensure(IsSaveSucceed);
 			ExtendDataContainer.Struct->DestroyStruct(DefaultExtendData);
 			FMemory::Free(DefaultExtendData);
 
@@ -981,7 +982,8 @@ namespace GameSerializerCore
 		}
 
 		bool bSameValue;
-		ensure(StructToJson::UStructToJsonAttributes(Class, Object, Class->GetDefaultObject(), bSameValue, JsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
+		const bool IsSaveSucceed = StructToJson::UStructToJsonAttributes(Class, Object, Class->GetDefaultObject(), bSameValue, JsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson));
+		ensure(IsSaveSucceed);
 		return ObjectIdx;
 	}
 
@@ -1101,7 +1103,8 @@ namespace GameSerializerCore
 	{
 		const TSharedRef<FJsonObject> StructJsonObject = MakeShared<FJsonObject>();
 		bool bSameValue;
-		ensure(StructToJson::UStructToJsonAttributes(Struct, Value, DefaultValue, bSameValue, StructJsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson)));
+		const bool IsSaveSucceed = StructToJson::UStructToJsonAttributes(Struct, Value, DefaultValue, bSameValue, StructJsonObject->Values, CheckFlags, SkipFlags, FCustomExportCallback::CreateRaw(this, &FStructToJson::ConvertObjectToJson));
+		ensure(IsSaveSucceed);
 		if (bSameValue == false)
 		{
 			JsonObject->SetObjectField(FieldName, StructJsonObject);
@@ -1168,13 +1171,13 @@ namespace GameSerializerCore
 	{
 		GameSerializerStatLog(STAT_JsonToStruct_LoadDynamicObjectJsonData);
 
-		for (const FInstancedObjectData& InstancedObjectData : InstancedObjectDatas)
+		for (FInstancedObjectData& InstancedObjectData : InstancedObjectDatas)
 		{
-			UClass* Class = InstancedObjectData.Object->GetClass();
-			UObject* LoadedObject = InstancedObjectData.Object.Get();
-			if (Class && LoadedObject)
+			UObject* InstancedObject = InstancedObjectData.Object.Get();
+			if (InstancedObject)
 			{
-				if (AActor* Actor = Cast<AActor>(LoadedObject))
+				UClass* Class = InstancedObject->GetClass();
+				if (AActor* Actor = Cast<AActor>(InstancedObject))
 				{
 					FObjectIdx OwnerIdx;
 					if (InstancedObjectData.JsonObject->TryGetNumberField(ActorOwnerFieldName, OwnerIdx))
@@ -1187,7 +1190,30 @@ namespace GameSerializerCore
 					}
 				}
 
-				ensure(JsonToStruct::JsonAttributesToUStructWithContainer(InstancedObjectData.JsonObject->Values, Class, LoadedObject, Class, LoadedObject, CheckFlags, SkipFlags, FCustomImportCallback::CreateRaw(this, &FJsonToStruct::JsonObjectIdxToObject)));
+				TArray<FName> CallRepNotifyIgnorePropertyNames;
+				if (InstancedObject->Implements<UGameSerializerInterface>())
+				{
+					CallRepNotifyIgnorePropertyNames = IGameSerializerInterface::GetCallRepNotifyIgnorePropertyNames(InstancedObject);
+				}
+				
+				TArray<FGameSerializerNetNotifyData>& NetNotifyDatas = InstancedObjectData.NetNotifyDatas;
+				const bool IsLoadSucceed = JsonToStruct::JsonAttributesToUStructWithContainer(InstancedObjectData.JsonObject->Values, Class, InstancedObject, Class, InstancedObject, CheckFlags, SkipFlags, 
+					FCustomImportCallback::CreateLambda([&](const TSharedPtr<FJsonValue>& JsonValue, FProperty* Property, void* OutValue) mutable
+					{
+						if (Property->HasAnyPropertyFlags(CPF_RepNotify))
+						{
+							if (CallRepNotifyIgnorePropertyNames.Contains(Property->GetFName()) == false)
+							{
+								UFunction* RepNotifyFunc = Class->FindFunctionByName(Property->RepNotifyFunc);
+								check(RepNotifyFunc);
+								FGameSerializerNetNotifyData& PropertyAndPreData = NetNotifyDatas.AddDefaulted_GetRef();
+								PropertyAndPreData.Property = Property;
+								PropertyAndPreData.RepNotifyFunc = RepNotifyFunc;
+							}
+						}
+						return JsonObjectIdxToObject(JsonValue, Property, OutValue);
+					}));
+				ensure(IsLoadSucceed);
 			}
 		}
 	}
@@ -1235,21 +1261,24 @@ namespace GameSerializerCore
 		{
 			if (UObject* LoadedObject = InstancedObjectData.Object.Get())
 			{
+				FGameSerializerCallRepNotifyFunc CallRepNotifyFunc(LoadedObject, InstancedObjectData.NetNotifyDatas);
+				
 				const TSharedPtr<FJsonObject>* ExtendDataJsonObject;
 				if (InstancedObjectData.JsonObject->TryGetObjectField(ExtendDataFieldName, ExtendDataJsonObject))
 				{
 					UScriptStruct* Struct = CastChecked<UScriptStruct>(ExternalObjectsArray[-int32(ExtendDataJsonObject->Get()->GetNumberField(ExtendDataTypeFieldName))]);
 					FGameSerializerExtendData* ExtendData = static_cast<FGameSerializerExtendData*>(FMemory::Malloc(Struct->GetStructureSize()));
 					Struct->InitializeStruct(ExtendData);
-					ensure(JsonToStruct::JsonAttributesToUStructWithContainer(ExtendDataJsonObject->Get()->Values, Struct, ExtendData, Struct, ExtendData, CheckFlags, SkipFlags, FCustomImportCallback::CreateRaw(this, &FJsonToStruct::JsonObjectIdxToObject)));
+					const bool IsLoadSucceed = JsonToStruct::JsonAttributesToUStructWithContainer(ExtendDataJsonObject->Get()->Values, Struct, ExtendData, Struct, ExtendData, CheckFlags, SkipFlags, FCustomImportCallback::CreateRaw(this, &FJsonToStruct::JsonObjectIdxToObject));
+					ensure(IsLoadSucceed);
 					FGameSerializerExtendDataContainer DataContainer;
 					DataContainer.Struct = Struct;
 					DataContainer.ExtendData = MakeShareable(ExtendData);
-					IGameSerializerInterface::WhenGamePostLoad(LoadedObject, DataContainer);
+					IGameSerializerInterface::WhenGamePostLoad(LoadedObject, DataContainer, CallRepNotifyFunc);
 				}
 				else
 				{
-					IGameSerializerInterface::WhenGamePostLoad(LoadedObject, FGameSerializerExtendDataContainer());
+					IGameSerializerInterface::WhenGamePostLoad(LoadedObject, FGameSerializerExtendDataContainer(), CallRepNotifyFunc);
 				}
 			}
 		}
@@ -1542,7 +1571,8 @@ namespace GameSerializerCore
 		if (JsonObject->TryGetObjectField(FieldName, StructJsonObjectPtr))
 		{
 			const TSharedPtr<FJsonObject>& StructJsonObject = *StructJsonObjectPtr;
-			ensure(JsonToStruct::JsonAttributesToUStructWithContainer(StructJsonObject->Values, Struct, Value, Struct, Value, CheckFlags, SkipFlags, FCustomImportCallback::CreateRaw(this, &FJsonToStruct::JsonObjectIdxToObject)));
+			const bool IsLoadSucceed = JsonToStruct::JsonAttributesToUStructWithContainer(StructJsonObject->Values, Struct, Value, Struct, Value, CheckFlags, SkipFlags, FCustomImportCallback::CreateRaw(this, &FJsonToStruct::JsonObjectIdxToObject));
+			ensure(IsLoadSucceed);
 		}
 	}
 
