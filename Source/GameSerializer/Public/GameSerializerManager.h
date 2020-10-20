@@ -67,9 +67,9 @@ protected:
 	void SerializeLevel(ULevel* Level);
 	void SerializeWorldWhenRemoved(UWorld* World);
 
-	void WhenLevelInited(ULevel* Level) { OnLevelInitedNative.Broadcast(Level); }
-	void WhenLevelLoaded(ULevel* Level) { OnLevelLoadedNative.Broadcast(Level); }
-	void WhenLevelPreSave(ULevel* Level) { OnLevelPreSaveNative.Broadcast(Level); }
+	virtual void WhenLevelInitialized(ULevel* Level) { OnLevelInitializedNative.Broadcast(Level); }
+	virtual void WhenLevelLoaded(ULevel* Level) { OnLevelLoadedNative.Broadcast(Level); }
+	virtual void WhenLevelPreSave(ULevel* Level) { OnLevelPreSaveNative.Broadcast(Level); }
 public:
 	UFUNCTION(BlueprintCallable, Category = "游戏序列化")
 	void ArchiveWorldAllState(UWorld* World);
@@ -77,8 +77,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "游戏序列化")
 	void OpenWorld(TSoftObjectPtr<UWorld> ToWorld);
 	
-	DECLARE_MULTICAST_DELEGATE_OneParam(FOnLevelInitedNative, ULevel*);
-	FOnLevelInitedNative OnLevelInitedNative;
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnLevelInitializedNative, ULevel*);
+	FOnLevelInitializedNative OnLevelInitializedNative;
 
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnLevelLoadedNative, ULevel*);
 	FOnLevelLoadedNative OnLevelLoadedNative;

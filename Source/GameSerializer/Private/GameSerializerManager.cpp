@@ -423,7 +423,7 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 			}
 		}
 
-		WhenLevelInited(Level);
+		WhenLevelInitialized(Level);
 	}
 }
 
