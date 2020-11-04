@@ -89,7 +89,6 @@ private:
 	FDelegateHandle OnLevelAdd_DelegateHandle;
 	FDelegateHandle OnWorldCleanup_DelegateHandle;
 	FDelegateHandle OnGameModeInitialized_DelegateHandle;
-	FDelegateHandle OnGameModeLogout_DelegateHandle;
 #if WITH_EDITORONLY_DATA
 	FDelegateHandle PrePIEEnded_DelegateHandle;
 #endif
@@ -104,14 +103,7 @@ private:
 	UPROPERTY(Transient)
 	TArray<UGameSerializerLevelStreamingLambda*> CachedLevelStreamingLambdas;
 public:
-	struct FPlayerData
-	{
-		TWeakObjectPtr<APawn> OriginPawn;
-		TWeakObjectPtr<APlayerState> PlayerState;
-	};
-	TMap<TWeakObjectPtr<APlayerController>, FPlayerData> PlayerDataMap;
-
 	UFUNCTION(BlueprintCallable, Category = "游戏序列化")
 	APawn* LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, AController* NewPlayer, const FTransform& SpawnTransform);
-	void SerializePlayer(APlayerController* Player);
+	virtual void SerializePlayer(APlayerController* Player);
 };

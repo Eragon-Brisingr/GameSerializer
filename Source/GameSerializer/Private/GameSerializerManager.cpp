@@ -157,18 +157,6 @@ void UGameSerializerManager::EnableSystem()
 				LoadOrInitWorld(World);
 			});
 		});
-
-		OnGameModeLogout_DelegateHandle = FGameModeEvents::OnGameModeLogoutEvent().AddWeakLambda(this, [this](AGameModeBase* GameMode, AController* Exiting)
-		{
-			if (GameMode->GetWorld() != LoadedWorld)
-			{
-				return;
-			}
-
-			APlayerController* Player = CastChecked<APlayerController>(Exiting);
-			SerializePlayer(Player);
-			PlayerDataMap.Remove(Player);
-		});
 	}
 }
 
@@ -180,7 +168,6 @@ void UGameSerializerManager::DisableSystem()
 		FWorldDelegates::LevelAddedToWorld.Remove(OnLevelAdd_DelegateHandle);
 		FWorldDelegates::OnWorldCleanup.Remove(OnWorldCleanup_DelegateHandle);
 		FGameModeEvents::GameModeInitializedEvent.Remove(OnGameModeInitialized_DelegateHandle);
-		FGameModeEvents::OnGameModeLogoutEvent().Remove(OnGameModeLogout_DelegateHandle);
 #if WITH_EDITOR
 		FEditorDelegates::PrePIEEnded.Remove(PrePIEEnded_DelegateHandle);
 #endif
@@ -191,7 +178,6 @@ void UGameSerializerManager::DisableAutoSave()
 {
 	LoadedWorld = nullptr;
 	LoadedLevels.Empty();
-	PlayerDataMap.Empty();
 }
 
 bool UGameSerializerManager::IsArchiveWorld(UWorld* World) const
@@ -570,7 +556,6 @@ void UGameSerializerManager::SerializeWorldWhenRemoved(UWorld* World)
 {
 	check(LoadedWorld == World);
 	ArchiveWorldAllState(World);
-	PlayerDataMap.Empty();
 	LoadedLevels.Empty();
 	LoadedWorld = nullptr;
 }
@@ -677,14 +662,6 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 	UE_LOG(GameSerializer_Log, Display, TEXT("玩家[%s]启动游戏序列化系统"), *PlayerName);
 
 	APlayerController* PlayerController = Cast<APlayerController>(NewPlayer);
-	if (ensure(PlayerController))
-	{
-		FPlayerData PlayerData;
-		PlayerData.OriginPawn = Pawn;
-		PlayerData.PlayerState = PlayerState;
-		PlayerDataMap.Add(PlayerController, PlayerData);
-	}
-	
 	if (JsonObject.IsSet())
 	{
 		const TSharedRef<FJsonObject> RootJsonObject = JsonObject.GetValue();
@@ -730,14 +707,8 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 
 void UGameSerializerManager::SerializePlayer(APlayerController* Player)
 {
-	const FPlayerData* PlayerData = PlayerDataMap.Find(Player);
-	if (PlayerData == nullptr)
-	{
-		return;
-	}
-	
-	APawn* Pawn = PlayerData->OriginPawn.Get(true);
-	if (ensure(Pawn))
+	APawn* Pawn = Player->GetPawn();
+	if (ensure(Pawn && Player->PlayerState))
 	{
 		struct FPlayerSerializer : public GameSerializerCore::FStructToJson
 		{
@@ -749,7 +720,7 @@ void UGameSerializerManager::SerializePlayer(APlayerController* Player)
 		FPlayerSerializer PlayerSerializer;
 		PlayerSerializer.AddStruct(JsonFieldName::WorldOrigin, Pawn->GetWorld()->OriginLocation);
 		PlayerSerializer.AddObject(JsonFieldName::PlayerController, Player);
-		PlayerSerializer.AddObject(JsonFieldName::PlayerState, PlayerData->PlayerState.Get(true));
+		PlayerSerializer.AddObject(JsonFieldName::PlayerState, Player->PlayerState);
 		PlayerSerializer.AddObject(JsonFieldName::PlayerPawn, Pawn);
 
 		SaveJsonObject(Pawn->GetWorld(), PlayerSerializer.GetResultJson(), TEXT("Players"), *Pawn->GetName());
