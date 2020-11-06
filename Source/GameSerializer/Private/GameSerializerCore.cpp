@@ -256,12 +256,9 @@ namespace CustomJsonConverter
 				FString StringValue;
 				Property->ExportTextItem(StringValue, Value, DefaultValue, nullptr, PPF_None);
 
-				// TODO：通过比较String差异的检查比较耗，考虑用比较case中不存在的类型
 				if (DefaultValue)
 				{
-					FString DefaultStringValue;
-					Property->ExportTextItem(DefaultStringValue, DefaultValue, nullptr, nullptr, PPF_None);
-					bSameValue = DefaultStringValue == StringValue;
+					bSameValue = Property->Identical(Value, DefaultValue);
 				}
 				
 				return MakeShared<FJsonValueString>(StringValue);
