@@ -1145,7 +1145,10 @@ namespace GameSerializerCore
 			}
 #endif
 
-			ensure(ExternalObject);
+			if (ensure(ExternalObject) == false)
+			{
+				UE_LOG(GameSerializer_Log, Warning, TEXT("未能加载对象 [%s]"), *SoftObjectPath.ToString());
+			}
 			ExternalObjectsArray[Idx] = ExternalObject;
 		}
 	}
@@ -1309,7 +1312,11 @@ namespace GameSerializerCore
 	UObject* FJsonToStruct::JsonObjectToInstanceObject(const TSharedRef<FJsonObject>& JsonObject, FObjectIdx ObjectIdx)
 	{
 		const FString ObjectName = JsonObject->GetStringField(ObjectNameFieldName);
-		UClass* ObjectClass = CastChecked<UClass>(ExternalObjectsArray[-JsonObject->GetIntegerField(ObjectClassFieldName)]);
+		UClass* ObjectClass = Cast<UClass>(ExternalObjectsArray[-JsonObject->GetIntegerField(ObjectClassFieldName)]);
+		if (ObjectClass == nullptr)
+		{
+			return nullptr;
+		}
 
 		UObject* Object = FindObject<UObject>(Outer, *ObjectName);
 
