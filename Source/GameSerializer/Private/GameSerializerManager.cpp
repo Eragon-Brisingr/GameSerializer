@@ -647,6 +647,8 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 	TOptional<TSharedRef<FJsonObject>> JsonObject = bInvokeLoadGame ? TryLoadJsonObject(World, TEXT("Players"), *PlayerName) : TOptional<TSharedRef<FJsonObject>>();
 	FGuardValue_Bitfield(bShouldInitSpawnActor, bInvokeLoadGame ? JsonObject.IsSet() == false : true);
 	FActorSpawnParameters SpawnInfo;
+	SpawnInfo.bNoFail = true;
+	SpawnInfo.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AdjustIfPossibleButAlwaysSpawn;
 	SpawnInfo.Name = *PlayerName;
 	SpawnInfo.Instigator = GameMode->GetInstigator();
 	SpawnInfo.OverrideLevel = SpawnLevel;
