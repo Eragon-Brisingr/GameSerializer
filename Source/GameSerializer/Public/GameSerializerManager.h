@@ -38,13 +38,14 @@ public:
 /**
  * 
  */
-UCLASS(abstract)
+UCLASS()
 class GAMESERIALIZER_API UGameSerializerManager : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()
 public:
 	UGameSerializerManager();
-
+	
+	bool ShouldCreateSubsystem(UObject* Outer) const override;
 	void Initialize(FSubsystemCollectionBase& Collection) override;
 	void Deinitialize() override;
 

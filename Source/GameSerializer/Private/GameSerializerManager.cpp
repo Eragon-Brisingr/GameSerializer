@@ -79,6 +79,17 @@ UGameSerializerManager::UGameSerializerManager()
 	
 }
 
+bool UGameSerializerManager::ShouldCreateSubsystem(UObject* Outer) const
+{
+	if (UGameSerializerManager::StaticClass() == GetClass())
+	{
+		TArray<UClass*> DerivedClasses;
+		GetDerivedClasses(UGameSerializerManager::StaticClass(), DerivedClasses, false);
+		return DerivedClasses.Num() == 0;
+	}
+	return true;
+}
+
 void UGameSerializerManager::Initialize(FSubsystemCollectionBase& Collection)
 {
 	EnableSystem();

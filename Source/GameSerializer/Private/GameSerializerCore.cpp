@@ -1230,7 +1230,7 @@ namespace GameSerializerCore
 				if (UBlueprintGeneratedClass* BPGC = Cast<UBlueprintGeneratedClass>(SpawnedActor->GetClass()))
 				{
 					// SimpleConstructionScript已经执行过了，跳过
-					TGuardValue<USimpleConstructionScript*> SimpleConstructionScriptGuard(BPGC->SimpleConstructionScript, nullptr);
+					TGuardValue<TObjectPtr<USimpleConstructionScript>> SimpleConstructionScriptGuard(BPGC->SimpleConstructionScript, nullptr);
 					SpawnedActor->FinishSpawning(SpawnedActor->GetActorTransform());
 				}
 				else
