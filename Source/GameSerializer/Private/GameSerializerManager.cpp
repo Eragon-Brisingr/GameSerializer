@@ -303,7 +303,7 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 	}
 	LoadedLevels.Add(Level);
 	
-	const FString LevelName = Level->GetOuter()->GetName();
+	const FString LevelName = GetLevelPath(Level);
 	AWorldSettings* WorldSettings = CastChecked<UWorld>(Level->GetOuter())->GetWorldSettings();
 	if (ensure(WorldSettings))
 	{
@@ -428,7 +428,10 @@ DECLARE_CYCLE_STAT(TEXT("GameSerializerManager_LoadStreamLevelStart"), STAT_Game
 DECLARE_CYCLE_STAT(TEXT("GameSerializerManager_LoadOrInitWorld"), STAT_GameSerializerManage_LoadOrInitWorld, STATGROUP_GameSerializer);
 void UGameSerializerManager::LoadOrInitWorld(UWorld* World)
 {
-	ensure(LoadedWorld == nullptr);
+	if (ensure(LoadedWorld == nullptr) == false)
+	{
+		return;
+	}
 	LoadedWorld = World;
 	
 	GameSerializerStatLog(STAT_GameSerializerManage_LoadOrInitWorld);
@@ -438,66 +441,6 @@ void UGameSerializerManager::LoadOrInitWorld(UWorld* World)
 	ensure(LoadedLevels.Num() == 0);
 	LoadedLevels.Reset();
 	
-	const TArray<ULevelStreaming*>& StreamingLevels = World->GetStreamingLevels();
-	CachedLevelStreamingLambdas.Reset(StreamingLevels.Num());
-	for (ULevelStreaming* LevelStreaming : StreamingLevels)
-	{
-		if (ensure(LevelStreaming))
-		{
-			UGameSerializerLevelStreamingLambda* LevelStreamingLambda = NewObject<UGameSerializerLevelStreamingLambda>(LevelStreaming);
-			CachedLevelStreamingLambdas.Add(LevelStreamingLambda);
-			LevelStreaming->OnLevelLoaded.AddDynamic(LevelStreamingLambda, &UGameSerializerLevelStreamingLambda::WhenLevelLoaded);
-			LevelStreamingLambda->OnLevelLoaded.BindWeakLambda(this, [this](ULevel* LoadedLevel)
-			{
-				const FString LevelName = LoadedLevel->GetOuter()->GetName();
-				if (bInvokeLoadGame)
-				{
-					TOptional<TSharedRef<FJsonObject>> JsonObject = TryLoadJsonObject(LoadedLevel->GetWorld(), TEXT("Levels"), *LevelName);
-					if (JsonObject.IsSet())
-					{
-						FGuardValue_Bitfield(bShouldInitSpawnActor, false);
-
-						GameSerializerStatLog(STAT_GameSerializerManager_LoadStreamLevelStart);
-
-						UE_LOG(GameSerializer_Log, Display, TEXT("加载流式关卡[%s]"), *LoadedLevel->GetOuter()->GetName());
-
-						TArray<AActor*> PrepareLoadActors;
-						for (AActor* Actor : LoadedLevel->Actors)
-						{
-							if (Actor && Actor->Implements<UActorGameSerializerInterface>())
-							{
-								if (IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
-								{
-									PrepareLoadActors.Add(Actor);
-								}
-							}
-						}
-
-						TSharedRef<FLevelDeserializer> LevelDeserializer = MakeShared<FLevelDeserializer>(LoadedLevel, JsonObject.GetValue());
-						const FIntVector OldWorldOrigin = LevelDeserializer->GetStruct<FIntVector>(JsonFieldName::WorldOrigin);
-						TGuardValue<FIntVector> WorldOffsetGuard(GameSerializerContext::WorldOffset, OldWorldOrigin - LoadedLevel->GetWorld()->OriginLocation);
-						LevelDeserializer->LoadExternalObject();
-						LevelDeserializer->InstanceDynamicObject();
-						LevelDeserializer->LoadDynamicObjectJsonData();
-						
-						const TArray<UObject*> LoadedActors = LevelDeserializer->GetObjects(JsonFieldName::LevelActors);
-						for (AActor* Actor : PrepareLoadActors)
-						{
-							if (IsValid(Actor))
-							{
-								if (LoadedActors.Contains(Actor) == false)
-								{
-									Actor->Destroy();
-								}
-							}
-						}
-						StreamLoadedLevelDataMap.Add(LoadedLevel, LevelDeserializer);
-					}
-				}
-			});
-		}
-	}
-
 	for (ULevel* Level : World->GetLevels())
 	{
 		LoadOrInitLevel(Level);
@@ -524,7 +467,7 @@ void UGameSerializerManager::SerializeLevel(ULevel* Level)
 
 	WhenLevelPreSave(Level);
 	
-	const FString LevelName = Level->GetOuter()->GetName();
+	const FString LevelName = GetLevelPath(Level);
 	UE_LOG(GameSerializer_Log, Display, TEXT("保存关卡[%s]"), *LevelName);
 
 	TArray<UObject*> SerializeList;
@@ -606,6 +549,14 @@ void UGameSerializerManager::OpenWorld(TSoftObjectPtr<UWorld> ToWorld)
 		}
 		GEngine->Exec(GetWorld(), *FString::Printf(TEXT("open %s"), *ToWorldName));
 	}
+}
+
+FString UGameSerializerManager::GetLevelPath(const ULevel* Level)
+{
+	const FString PackageName = UWorld::RemovePIEPrefix(Level->GetPackage()->GetName());
+	int32 LevelNameStartIndex;
+	check(PackageName.FindLastChar(TEXT('/'), LevelNameStartIndex));
+	return PackageName.Right(PackageName.Len() - LevelNameStartIndex - 1);
 }
 
 APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, AController* NewPlayer, const FTransform& SpawnTransform)

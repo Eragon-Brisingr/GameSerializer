@@ -101,8 +101,8 @@ private:
 	TArray<TWeakObjectPtr<ULevel>> LoadedLevels;
 
 	TMap<TWeakObjectPtr<ULevel>, TSharedRef<struct FLevelDeserializer>> StreamLoadedLevelDataMap;
-	UPROPERTY(Transient)
-	TArray<UGameSerializerLevelStreamingLambda*> CachedLevelStreamingLambdas;
+
+	static FString GetLevelPath(const ULevel* Level);
 public:
 	UFUNCTION(BlueprintCallable, Category = "游戏序列化")
 	APawn* LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, AController* NewPlayer, const FTransform& SpawnTransform);
