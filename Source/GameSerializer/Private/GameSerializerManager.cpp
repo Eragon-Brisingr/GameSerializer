@@ -606,6 +606,8 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 		}
 	}
 
+	UE_LOG(GameSerializer_Log, Display, TEXT("玩家[%s]启动游戏序列化系统"), *PlayerName);
+
 	TOptional<TSharedRef<FJsonObject>> JsonObject = bInvokeLoadGame ? TryLoadJsonObject(World, TEXT("Players"), *PlayerName) : TOptional<TSharedRef<FJsonObject>>();
 	FGuardValue_Bitfield(bShouldInitSpawnActor, bInvokeLoadGame ? JsonObject.IsSet() == false : true);
 	FActorSpawnParameters SpawnInfo;
@@ -622,8 +624,6 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 	{
 		return Pawn;
 	}
-
-	UE_LOG(GameSerializer_Log, Display, TEXT("玩家[%s]启动游戏序列化系统"), *PlayerName);
 
 	APlayerController* PlayerController = Cast<APlayerController>(NewPlayer);
 	if (JsonObject.IsSet())
@@ -649,21 +649,6 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 		const FIntVector OldWorldOrigin = PlayerDeserializer.GetStruct<FIntVector>(JsonFieldName::WorldOrigin);
 		TGuardValue<FIntVector> WorldOffsetGuard(GameSerializerContext::WorldOffset, OldWorldOrigin - Pawn->GetWorld()->OriginLocation);
 		PlayerDeserializer.LoadAllDataImmediately();
-	}
-	else
-	{
-		if (PlayerController->Implements<UActorGameSerializerInterface>())
-		{
-			InitActorAndComponents(PlayerController);
-		}
-		if (PlayerState->Implements<UActorGameSerializerInterface>())
-		{
-			InitActorAndComponents(PlayerState);
-		}
-		if (Pawn->Implements<UActorGameSerializerInterface>())
-		{
-			InitActorAndComponents(Pawn);
-		}
 	}
 	
 	return Pawn;
