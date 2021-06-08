@@ -26,7 +26,7 @@ public:
 	FGameSerializerExtendDataContainer() = default;
 	
 	UPROPERTY()
-	const UScriptStruct* Struct = nullptr;
+	TObjectPtr<const UScriptStruct> Struct = nullptr;
 
 	TSharedPtr<FGameSerializerExtendData> ExtendData;
 
@@ -88,7 +88,7 @@ struct GAMESERIALIZER_API FActorGameSerializerExtendData : public FGameSerialize
 	GENERATED_BODY()
 public:
 	UPROPERTY(SaveGame)
-	APawn* Instigator = nullptr;
+	TObjectPtr<APawn> Instigator = nullptr;
 
 	void SaveData(const AActor* Actor);
 	void LoadData(AActor* Actor) const;
