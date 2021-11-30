@@ -23,6 +23,46 @@ namespace GameSerializerExtendDataFactory
 	}
 }
 
+void FGameSerializerCallRepNotifyFunc::CallRepNotifyFunc() const
+{
+#if DO_CHECK
+	ensureAlwaysMsgf(bCalled == false, TEXT("[%s] FGameSerializerCallRepNotifyFunc::CallRepNotifyFunc only can call once."), *InstancedObject->GetName());
+	bCalled = true;
+#endif
+	
+	UClass* Class = InstancedObject->GetClass();
+	const UObject* CDO = Class->GetDefaultObject();
+
+	TGuardValue<bool> IsGameSerializerCallGuard(bIsGameSerializerCall, true);
+	
+	for (const FGameSerializerNetNotifyData& NetNotifyData : *NetNotifyDatas)
+	{
+		UFunction* RepNotifyFunc = NetNotifyData.RepNotifyFunc;
+
+		FMemMark Mark(FMemStack::Get());
+		uint8* Params = new(FMemStack::Get(), MEM_Zeroed, RepNotifyFunc->ParmsSize)uint8;
+
+		if (RepNotifyFunc->NumParms == 1)
+		{
+			FField* FirstParam = RepNotifyFunc->ChildProperties;
+			check(FirstParam->GetClass() == FirstParam->GetClass());
+
+			TFieldIterator<FProperty> Itr(RepNotifyFunc);
+			Itr->CopyCompleteValue(Itr->ContainerPtrToValuePtr<void>(Params), NetNotifyData.Property->ContainerPtrToValuePtr<void>(CDO));
+		}
+
+		InstancedObject->ProcessEvent(RepNotifyFunc, Params);
+
+		Mark.Pop();
+	}
+}
+
+bool FGameSerializerCallRepNotifyFunc::bIsGameSerializerCall = false;
+bool FGameSerializerCallRepNotifyFunc::IsGameSerializerCall()
+{
+	return bIsGameSerializerCall;
+}
+
 FGameSerializerExtendDataContainer UGameSerializerExtendDataFunctionLibrary::DefaultPreGameSave(UObject* Instance)
 {
 	if (FGameSerializerExtendDataFactory* Factory = GameSerializerExtendDataFactory::FindFactory(Instance))
@@ -32,13 +72,13 @@ FGameSerializerExtendDataContainer UGameSerializerExtendDataFunctionLibrary::Def
 	return FGameSerializerExtendDataContainer();
 }
 
-void UGameSerializerExtendDataFunctionLibrary::DefaultPostLoadGame(UObject* Instance, const FGameSerializerExtendDataContainer& ExtendData)
+void UGameSerializerExtendDataFunctionLibrary::DefaultPostLoadGame(UObject* Instance, const FGameSerializerExtendDataContainer& ExtendData, const FGameSerializerCallRepNotifyFunc& CallRepNotifyFunc)
 {
 	if (ExtendData.IsValid())
 	{
 		if (FGameSerializerExtendDataFactory* Factory = GameSerializerExtendDataFactory::FindFactory(Instance))
 		{
-			Factory->WhenGamePostLoad(Instance, ExtendData);
+			Factory->WhenGamePostLoad(Instance, ExtendData, CallRepNotifyFunc);
 		}
 	}
 }
@@ -61,9 +101,10 @@ FGameSerializerExtendDataContainer FActorGameSerializerExtendDataFactory::WhenGa
 	return FGameSerializerExtendDataContainer::Make(ExtendData);
 }
 
-void FActorGameSerializerExtendDataFactory::WhenGamePostLoad(UObject* Instance, const FGameSerializerExtendDataContainer& ExtendData)
+void FActorGameSerializerExtendDataFactory::WhenGamePostLoad(UObject* Instance, const FGameSerializerExtendDataContainer& ExtendData, const FGameSerializerCallRepNotifyFunc& CallRepNotifyFunc)
 {
 	AActor* Actor = CastChecked<AActor>(Instance);
 	const FActorGameSerializerExtendData& ActorExtendData = ExtendData.Get<FActorGameSerializerExtendData>();
 	ActorExtendData.LoadData(Actor);
+	CallRepNotifyFunc.CallRepNotifyFunc();
 }

@@ -401,7 +401,8 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 		GameSerializerStatLog(STAT_GameSerializerManage_InitLevel);
 		
 		UE_LOG(GameSerializer_Log, Display, TEXT("初始化关卡[%s]"), *LevelName);
-		
+
+		// TODO：改掉这个Hack流程
 		if (IsMainLevel)
 		{
 			AGameStateBase* GameState = World->GetGameState();

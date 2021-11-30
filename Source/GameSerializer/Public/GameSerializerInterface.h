@@ -7,45 +7,6 @@
 #include "GameSerializerExtendData.h"
 #include "GameSerializerInterface.generated.h"
 
-struct FGameSerializerNetNotifyData
-{
-	FProperty* Property;
-	UFunction* RepNotifyFunc;
-};
-
-USTRUCT(BlueprintType, BlueprintInternalUseOnly)
-struct GAMESERIALIZER_API FGameSerializerCallRepNotifyFunc
-{
-	GENERATED_BODY()
-public:
-	FGameSerializerCallRepNotifyFunc() = default;
-	FGameSerializerCallRepNotifyFunc(UObject* InstancedObject, const TArray<FGameSerializerNetNotifyData>& NetNotifyDatas)
-		: InstancedObject(InstancedObject), NetNotifyDatas(&NetNotifyDatas)
-	{}
-
-	void CallRepNotifyFunc() const;
-	static bool IsGameSerializerCall();
-private:
-	UObject* InstancedObject = nullptr;
-	const TArray<FGameSerializerNetNotifyData>* NetNotifyDatas = nullptr;
-#if DO_CHECK
-	mutable bool bCalled = false;
-#endif
-	static bool bIsGameSerializerCall;
-};
-
-UCLASS()
-class UGameSerializerCallRepNotifyFuncFunctionLibrary : public UBlueprintFunctionLibrary
-{
-	GENERATED_BODY()
-public:
-	UFUNCTION(BlueprintCallable, Category = "游戏序列化")
-	static void CallRepNotifyFunc(const FGameSerializerCallRepNotifyFunc& CallRepNotifyFunc) { CallRepNotifyFunc.CallRepNotifyFunc(); }
-
-	UFUNCTION(BlueprintPure, Category = "游戏序列化")
-	static bool IsGameSerializerCall() { return FGameSerializerCallRepNotifyFunc::IsGameSerializerCall(); }
-};
-
 UINTERFACE(MinimalAPI)
 class UGameSerializerInterface : public UInterface
 {
@@ -71,7 +32,7 @@ public:
 	virtual TArray<FName> GetCallRepNotifyIgnorePropertyNames_Implementation() { return TArray<FName>(); }
 	static TArray<FName> GetCallRepNotifyIgnorePropertyNames(UObject* Obj) { return Execute_GetCallRepNotifyIgnorePropertyNames(Obj); }
 protected:
-	void DefaultWhenGamePostLoad(const FGameSerializerExtendDataContainer& ExtendData);
+	void DefaultWhenGamePostLoad(const FGameSerializerExtendDataContainer& ExtendData, const FGameSerializerCallRepNotifyFunc& CallRepNotifyFunc);
 };
 
 UINTERFACE(MinimalAPI)

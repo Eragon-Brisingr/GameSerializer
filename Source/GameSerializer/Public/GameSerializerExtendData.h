@@ -53,6 +53,45 @@ public:
 	}
 };
 
+struct FGameSerializerNetNotifyData
+{
+	FProperty* Property;
+	UFunction* RepNotifyFunc;
+};
+
+USTRUCT(BlueprintType, BlueprintInternalUseOnly)
+struct GAMESERIALIZER_API FGameSerializerCallRepNotifyFunc
+{
+	GENERATED_BODY()
+	public:
+	FGameSerializerCallRepNotifyFunc() = default;
+	FGameSerializerCallRepNotifyFunc(UObject* InstancedObject, const TArray<FGameSerializerNetNotifyData>& NetNotifyDatas)
+		: InstancedObject(InstancedObject), NetNotifyDatas(&NetNotifyDatas)
+	{}
+
+	void CallRepNotifyFunc() const;
+	static bool IsGameSerializerCall();
+	private:
+	UObject* InstancedObject = nullptr;
+	const TArray<FGameSerializerNetNotifyData>* NetNotifyDatas = nullptr;
+#if DO_CHECK
+	mutable bool bCalled = false;
+#endif
+	static bool bIsGameSerializerCall;
+};
+
+UCLASS()
+class UGameSerializerCallRepNotifyFuncFunctionLibrary : public UBlueprintFunctionLibrary
+{
+	GENERATED_BODY()
+public:
+	UFUNCTION(BlueprintCallable, Category = "游戏序列化")
+	static void CallRepNotifyFunc(const FGameSerializerCallRepNotifyFunc& CallRepNotifyFunc) { CallRepNotifyFunc.CallRepNotifyFunc(); }
+
+	UFUNCTION(BlueprintPure, Category = "游戏序列化")
+	static bool IsGameSerializerCall() { return FGameSerializerCallRepNotifyFunc::IsGameSerializerCall(); }
+};
+
 UCLASS()
 class UGameSerializerExtendDataFunctionLibrary : public UBlueprintFunctionLibrary
 {
@@ -62,13 +101,13 @@ public:
 	static FGameSerializerExtendDataContainer DefaultPreGameSave(UObject* Instance);
 	
 	UFUNCTION(BlueprintCallable, Category = "游戏序列化", meta = (DefaultToSelf = Instance, HidePin = Instance))
-	static void DefaultPostLoadGame(UObject* Instance, const FGameSerializerExtendDataContainer& ExtendData);
+	static void DefaultPostLoadGame(UObject* Instance, const FGameSerializerExtendDataContainer& ExtendData, const FGameSerializerCallRepNotifyFunc& CallRepNotifyFunc);
 };
 
 struct GAMESERIALIZER_API FGameSerializerExtendDataFactory
 {
 	virtual FGameSerializerExtendDataContainer WhenGamePreSave(UObject* Instance) = 0;
-	virtual void WhenGamePostLoad(UObject* Instance, const FGameSerializerExtendDataContainer& ExtendData) = 0;
+	virtual void WhenGamePostLoad(UObject* Instance, const FGameSerializerExtendDataContainer& ExtendData, const FGameSerializerCallRepNotifyFunc& CallRepNotifyFunc) = 0;
 	virtual ~FGameSerializerExtendDataFactory() {}
 };
 
@@ -97,5 +136,5 @@ public:
 struct GAMESERIALIZER_API FActorGameSerializerExtendDataFactory : public FGameSerializerExtendDataFactory
 {
 	FGameSerializerExtendDataContainer WhenGamePreSave(UObject* Instance) override;
-	void WhenGamePostLoad(UObject* Instance, const FGameSerializerExtendDataContainer& ExtendData) override;
+	void WhenGamePostLoad(UObject* Instance, const FGameSerializerExtendDataContainer& ExtendData, const FGameSerializerCallRepNotifyFunc& CallRepNotifyFunc) override;
 };
