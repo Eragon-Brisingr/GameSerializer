@@ -68,8 +68,8 @@ public:
 
 	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
 	bool CanGameSerializedInLevel() const;
-	virtual bool CanGameSerializedInLevel_Implementation() const { return true; }
-	static bool CanGameSerializedInLevel(AActor* Actor) { return Execute_CanGameSerializedInLevel(Actor); }
+	virtual bool CanGameSerializedInLevel_Implementation() const;
+	static bool CanGameSerializedInLevel(const AActor* Actor) { return Execute_CanGameSerializedInLevel(Actor); }
 
 	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
 	AActor* GetGameSerializedOwner() const;
@@ -80,4 +80,9 @@ public:
 	void SetGameSerializedOwner(AActor* GameSerializedOwner);
 	virtual void SetGameSerializedOwner_Implementation(AActor* GameSerializedOwner);
 	static void SetGameSerializedOwner(AActor* Actor, AActor* GameSerializedOwner);
+
+	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
+	int32 GetGameSerializePriority() const;
+	virtual int32 GetGameSerializePriority_Implementation() const { return 0; }
+	static int32 GetGameSerializePriority(const AActor* Actor) { return Execute_GetGameSerializePriority(Actor); }
 };

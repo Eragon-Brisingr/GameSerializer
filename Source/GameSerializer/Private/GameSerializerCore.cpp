@@ -1171,7 +1171,7 @@ namespace GameSerializerCore
 	{
 		GameSerializerStatLog(STAT_JsonToStruct_LoadDynamicObjectJsonData);
 
-		for (FInstancedObjectData& InstancedObjectData : InstancedObjectDatas)
+		for (FInstancedObjectData& InstancedObjectData : AllInstancedObjectData)
 		{
 			UObject* InstancedObject = InstancedObjectData.Object.Get();
 			if (InstancedObject)
@@ -1196,7 +1196,7 @@ namespace GameSerializerCore
 					CallRepNotifyIgnorePropertyNames = IGameSerializerInterface::GetCallRepNotifyIgnorePropertyNames(InstancedObject);
 				}
 				
-				TArray<FGameSerializerNetNotifyData>& NetNotifyDatas = InstancedObjectData.NetNotifyDatas;
+				TArray<FGameSerializerNetNotifyData>& AllNetNotifyData = InstancedObjectData.AllNetNotifyData;
 				const bool IsLoadSucceed = JsonToStruct::JsonAttributesToUStructWithContainer(InstancedObjectData.JsonObject->Values, Class, InstancedObject, Class, InstancedObject, CheckFlags, SkipFlags, 
 					FCustomImportCallback::CreateLambda([&](const TSharedPtr<FJsonValue>& JsonValue, FProperty* Property, void* OutValue) mutable
 					{
@@ -1206,7 +1206,7 @@ namespace GameSerializerCore
 							{
 								UFunction* RepNotifyFunc = Class->FindFunctionByName(Property->RepNotifyFunc);
 								check(RepNotifyFunc);
-								FGameSerializerNetNotifyData& PropertyAndPreData = NetNotifyDatas.AddDefaulted_GetRef();
+								FGameSerializerNetNotifyData& PropertyAndPreData = AllNetNotifyData.AddDefaulted_GetRef();
 								PropertyAndPreData.Property = Property;
 								PropertyAndPreData.RepNotifyFunc = RepNotifyFunc;
 							}
@@ -1257,30 +1257,34 @@ namespace GameSerializerCore
 	{
 		GameSerializerStatLog(STAT_JsonToStruct_LoadDynamicObjectExtendData);
 
-		for (const FInstancedObjectData& InstancedObjectData : InstancedObjectDatas)
+		for (const FInstancedObjectData& InstancedObjectData : AllInstancedObjectData)
 		{
 			if (UObject* LoadedObject = InstancedObjectData.Object.Get())
 			{
-				FGameSerializerCallRepNotifyFunc CallRepNotifyFunc(LoadedObject, InstancedObjectData.NetNotifyDatas);
-				
-				const TSharedPtr<FJsonObject>* ExtendDataJsonObject;
-				if (InstancedObjectData.JsonObject->TryGetObjectField(ExtendDataFieldName, ExtendDataJsonObject))
-				{
-					UScriptStruct* Struct = CastChecked<UScriptStruct>(ExternalObjectsArray[-int32(ExtendDataJsonObject->Get()->GetNumberField(ExtendDataTypeFieldName))]);
-					FGameSerializerExtendData* ExtendData = static_cast<FGameSerializerExtendData*>(FMemory::Malloc(Struct->GetStructureSize()));
-					Struct->InitializeStruct(ExtendData);
-					const bool IsLoadSucceed = JsonToStruct::JsonAttributesToUStructWithContainer(ExtendDataJsonObject->Get()->Values, Struct, ExtendData, Struct, ExtendData, CheckFlags, SkipFlags, FCustomImportCallback::CreateRaw(this, &FJsonToStruct::JsonObjectIdxToObject));
-					ensure(IsLoadSucceed);
-					FGameSerializerExtendDataContainer DataContainer;
-					DataContainer.Struct = Struct;
-					DataContainer.ExtendData = MakeShareable(ExtendData);
-					IGameSerializerInterface::WhenGamePostLoad(LoadedObject, DataContainer, CallRepNotifyFunc);
-				}
-				else
-				{
-					IGameSerializerInterface::WhenGamePostLoad(LoadedObject, FGameSerializerExtendDataContainer(), CallRepNotifyFunc);
-				}
+				ExecutePostLoad(LoadedObject, InstancedObjectData);
 			}
+		}
+	}
+
+	void FJsonToStruct::ExecutePostLoad(UObject* LoadedObject, const FInstancedObjectData& InstancedObjectData) const
+	{
+		const FGameSerializerCallRepNotifyFunc CallRepNotifyFunc(LoadedObject, InstancedObjectData.AllNetNotifyData);
+		const TSharedPtr<FJsonObject>* ExtendDataJsonObject;
+		if (InstancedObjectData.JsonObject->TryGetObjectField(ExtendDataFieldName, ExtendDataJsonObject))
+		{
+			UScriptStruct* Struct = CastChecked<UScriptStruct>(ExternalObjectsArray[-int32(ExtendDataJsonObject->Get()->GetNumberField(ExtendDataTypeFieldName))]);
+			FGameSerializerExtendData* ExtendData = static_cast<FGameSerializerExtendData*>(FMemory::Malloc(Struct->GetStructureSize()));
+			Struct->InitializeStruct(ExtendData);
+			const bool IsLoadSucceed = JsonToStruct::JsonAttributesToUStructWithContainer(ExtendDataJsonObject->Get()->Values, Struct, ExtendData, Struct, ExtendData, CheckFlags, SkipFlags, FCustomImportCallback::CreateRaw(this, &FJsonToStruct::JsonObjectIdxToObject));
+			ensure(IsLoadSucceed);
+			FGameSerializerExtendDataContainer DataContainer;
+			DataContainer.Struct = Struct;
+			DataContainer.ExtendData = MakeShareable(ExtendData);
+			IGameSerializerInterface::WhenGamePostLoad(LoadedObject, DataContainer, CallRepNotifyFunc);
+		}
+		else
+		{
+			IGameSerializerInterface::WhenGamePostLoad(LoadedObject, FGameSerializerExtendDataContainer(), CallRepNotifyFunc);
 		}
 	}
 
@@ -1526,7 +1530,7 @@ namespace GameSerializerCore
 		ObjectsArray.SetNumUninitialized(ObjectIdx + 1);
 		ObjectsArray[ObjectIdx] = Object;
 
-		FInstancedObjectData& InstancedObjectData = InstancedObjectDatas.AddZeroed_GetRef();
+		FInstancedObjectData& InstancedObjectData = AllInstancedObjectData.AddZeroed_GetRef();
 		InstancedObjectData.Object = Object;
 		InstancedObjectData.JsonObject = JsonObject;
 
@@ -1558,9 +1562,9 @@ namespace GameSerializerCore
 		}
 	}
 
-	bool FJsonToStruct::JsonObjectIdxToObject(const TSharedPtr<FJsonValue>& JsonValue, FProperty* Property, void* OutValue)
+	bool FJsonToStruct::JsonObjectIdxToObject(const TSharedPtr<FJsonValue>& JsonValue, FProperty* Property, void* OutValue) const
 	{
-		if (FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property))
+		if (const FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property))
 		{
 			const FObjectIdx ObjectIdx = static_cast<int>(JsonValue->AsNumber());
 			ObjectProperty->SetObjectPropertyValue(OutValue, GetObjectByIdx(ObjectIdx));
@@ -1569,7 +1573,7 @@ namespace GameSerializerCore
 		return false;
 	}
 
-	void FJsonToStruct::GetStruct(const TSharedRef<FJsonObject>& JsonObject, const FString& FieldName, UScriptStruct* Struct, void* Value)
+	void FJsonToStruct::GetStruct(const TSharedRef<FJsonObject>& JsonObject, const FString& FieldName, UScriptStruct* Struct, void* Value) const
 	{
 		const TSharedPtr<FJsonObject>* StructJsonObjectPtr;
 		if (JsonObject->TryGetObjectField(FieldName, StructJsonObjectPtr))

@@ -70,6 +70,12 @@ void IActorGameSerializerInterface::WhenGameInit(AActor* Actor)
 	Execute_WhenGameInit(Actor);
 }
 
+bool IActorGameSerializerInterface::CanGameSerializedInLevel_Implementation() const
+{
+	const UObject* Self = CastChecked<UObject>(this);
+	return Self->HasAnyFlags(RF_Transient) == false;
+}
+
 AActor* IActorGameSerializerInterface::GetGameSerializedOwner_Implementation() const
 {
 	return CastChecked<AActor>(this)->GetOwner();

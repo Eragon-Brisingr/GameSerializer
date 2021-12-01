@@ -21,7 +21,6 @@ namespace JsonFieldName
 {
 	constexpr TCHAR LevelActors[] = TEXT("LevelActors");
 	constexpr TCHAR WorldOrigin[] = TEXT("WorldOrigin");
-	constexpr TCHAR GameState[] = TEXT("GameState");
 
 	constexpr TCHAR PlayerPawn[] = TEXT("Pawn");
 	constexpr TCHAR PlayerState[] = TEXT("PlayerState");
@@ -158,14 +157,18 @@ void UGameSerializerManager::EnableSystem()
 		OnGameModeInitialized_DelegateHandle = FGameModeEvents::GameModeInitializedEvent.AddWeakLambda(this, [this](AGameModeBase* GameMode)
 		{
 			UWorld* World = GameMode->GetWorld();
-			World->GameStateSetEvent.AddWeakLambda(this, [this, World](AGameStateBase*)
+			World->GameStateSetEvent.AddWeakLambda(this, [this, World](AGameStateBase* GameState)
 			{
 				if (bIsEnable == false || IsArchiveWorld(World) == false)
 				{
 					return;
 				}
 
-				LoadOrInitWorld(World);
+				if (ensure(GameState))
+				{
+					GameState->Rename(TEXT("GameState"));
+					LoadOrInitWorld(World);
+				}
 			});
 		});
 	}
@@ -302,6 +305,43 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 		return;
 	}
 	LoadedLevels.Add(Level);
+
+	auto LoadLevelExtendData = [](const FLevelDeserializer& LevelDeserializer, const TSet<UObject*>& LoadedActors)
+	{
+		using FInstancedObjectData = FLevelDeserializer::FInstancedObjectData;
+		
+		struct FActorSortUnit
+		{
+			FActorSortUnit(const FInstancedObjectData& InstancedObjectData, int32 Priority)
+				: InstancedObjectData(InstancedObjectData), Priority(Priority)
+			{}
+			const FInstancedObjectData& InstancedObjectData;
+			int32 Priority;
+		};
+		TArray<FActorSortUnit> ToLoadActors;
+		for (const FInstancedObjectData& InstancedObjectData : LevelDeserializer.GetAllInstancedObjectData())
+		{
+			if (UObject* LoadedObject = InstancedObjectData.Object.Get())
+			{
+				if (LoadedActors.Contains(LoadedObject))
+				{
+					ToLoadActors.Add({ InstancedObjectData, IActorGameSerializerInterface::GetGameSerializePriority(CastChecked<AActor>(LoadedObject)) });
+				}
+				else
+				{
+					LevelDeserializer.ExecutePostLoad(LoadedObject, InstancedObjectData);
+				}
+			}
+		}
+		ToLoadActors.Sort([](const FActorSortUnit& LHS, const FActorSortUnit& RHS){ return LHS.Priority < RHS.Priority; });
+		for (const FActorSortUnit& ActorSortUnit : ToLoadActors)
+		{
+			if (UObject* LoadedObject = ActorSortUnit.InstancedObjectData.Object.Get())
+			{
+				LevelDeserializer.ExecutePostLoad(LoadedObject, ActorSortUnit.InstancedObjectData);
+			}
+		}
+	};
 	
 	const FString LevelName = GetLevelPath(Level);
 	AWorldSettings* WorldSettings = CastChecked<UWorld>(Level->GetOuter())->GetWorldSettings();
@@ -330,25 +370,26 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 		});
 	}
 
-	if (TSharedRef<FLevelDeserializer>* StreamLoadedLevelDeserializerPtr = StreamLoadedLevelDataMap.Find(Level))
-	{
-		GameSerializerStatLog(STAT_GameSerializerManager_LoadStreamLevelEnd);
-		
-		UE_LOG(GameSerializer_Log, Display, TEXT("完成流式关卡[%s]加载"), *LevelName);
-		
-		FLevelDeserializer& FLevelDeserializer = StreamLoadedLevelDeserializerPtr->Get();
-		FLevelDeserializer.RestoreDynamicActorSpawnedData();
-		FLevelDeserializer.LoadDynamicObjectExtendData();
-
-		StreamLoadedLevelDataMap.Remove(Level);
-		WhenLevelLoaded(Level);
-		return;
-	}
-
 	UWorld* World = Level->GetWorld();
-	const bool IsMainLevel = World->PersistentLevel == Level;
 	if (bInvokeLoadGame)
 	{
+		if (TSharedRef<FLevelDeserializer>* StreamLoadedLevelDeserializerPtr = StreamLoadedLevelDataMap.Find(Level))
+		{
+			GameSerializerStatLog(STAT_GameSerializerManager_LoadStreamLevelEnd);
+		
+			UE_LOG(GameSerializer_Log, Display, TEXT("完成流式关卡[%s]加载"), *LevelName);
+		
+			FLevelDeserializer& LevelDeserializer = StreamLoadedLevelDeserializerPtr->Get();
+			LevelDeserializer.RestoreDynamicActorSpawnedData();
+
+			const TSet<UObject*> LoadedActors{ LevelDeserializer.GetObjects(JsonFieldName::LevelActors) };
+			LoadLevelExtendData(LevelDeserializer, LoadedActors);
+
+			StreamLoadedLevelDataMap.Remove(Level);
+			WhenLevelLoaded(Level);
+			return;
+		}
+
 		TOptional<TSharedRef<FJsonObject>> JsonObject = TryLoadJsonObject(Level->GetWorld(), TEXT("Levels"), *LevelName);
 		if (JsonObject.IsSet())
 		{
@@ -361,9 +402,9 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 			TArray<AActor*> PrepareLoadActors;
 			for (AActor* Actor : Level->Actors)
 			{
-				if (Actor && Actor->Implements<UActorGameSerializerInterface>())
+				if (IsValid(Actor))
 				{
-					if (IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
+					if (Actor->Implements<UActorGameSerializerInterface>() && IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
 					{
 						PrepareLoadActors.Add(Actor);
 					}
@@ -374,13 +415,15 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 			const FIntVector OldWorldOrigin = LevelDeserializer.GetStruct<FIntVector>(JsonFieldName::WorldOrigin);
 			TGuardValue<FIntVector> WorldOffsetGuard(GameSerializerContext::WorldOffset, OldWorldOrigin - Level->GetWorld()->OriginLocation);
 
-			if (IsMainLevel)
-			{
-				LevelDeserializer.RetargetDynamicObjectName(JsonFieldName::GameState, World->GetGameState()->GetFName());
-			}
-			
-			LevelDeserializer.LoadAllDataImmediately();
-			const TArray<UObject*> LoadedActors = LevelDeserializer.GetObjects(JsonFieldName::LevelActors);
+			LevelDeserializer.LoadExternalObject();
+			LevelDeserializer.InstanceDynamicObject();
+			LevelDeserializer.LoadDynamicObjectJsonData();
+			LevelDeserializer.DynamicActorFinishSpawning();
+			LevelDeserializer.RestoreDynamicActorSpawnedData();
+
+			const TSet<UObject*> LoadedActors{ LevelDeserializer.GetObjects(JsonFieldName::LevelActors) };
+			LoadLevelExtendData(LevelDeserializer, LoadedActors);
+
 			for (AActor* Actor : PrepareLoadActors)
 			{
 				if (IsValid(Actor))
@@ -402,23 +445,24 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 		
 		UE_LOG(GameSerializer_Log, Display, TEXT("初始化关卡[%s]"), *LevelName);
 
-		// TODO：改掉这个Hack流程
-		if (IsMainLevel)
+		struct FActorSortUnit
 		{
-			AGameStateBase* GameState = World->GetGameState();
-			if (GameState->Implements<UActorGameSerializerInterface>())
-			{
-				InitActorAndComponents(GameState);
-			}
-		}
-		
+			AActor* Actor;
+			int32 Priority;
+		};
+		TArray<FActorSortUnit> ActorsToLoad;
 		for (int32 Idx = 0; Idx < Level->Actors.Num(); ++Idx)
 		{
 			AActor* Actor = Level->Actors[Idx];
 			if (IsValid(Actor) && Actor->Implements<UActorGameSerializerInterface>() && IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
 			{
-				InitActorAndComponents(Actor);
+				ActorsToLoad.Add({ Actor, IActorGameSerializerInterface::GetGameSerializePriority(Actor) });
 			}
+		}
+		ActorsToLoad.Sort([](const FActorSortUnit& LHS, const FActorSortUnit& RHS){ return LHS.Priority < RHS.Priority; });
+		for (const FActorSortUnit& Actor : ActorsToLoad)
+		{
+			InitActorAndComponents(Actor.Actor);
 		}
 
 		WhenLevelInitialized(Level);
@@ -441,6 +485,66 @@ void UGameSerializerManager::LoadOrInitWorld(UWorld* World)
 
 	ensure(LoadedLevels.Num() == 0);
 	LoadedLevels.Reset();
+
+	const TArray<ULevelStreaming*>& StreamingLevels = World->GetStreamingLevels();
+	CachedLevelStreamingLambdas.Reset(StreamingLevels.Num());
+	for (ULevelStreaming* LevelStreaming : StreamingLevels)
+	{
+		if (ensure(LevelStreaming))
+		{
+			UGameSerializerLevelStreamingLambda* LevelStreamingLambda = NewObject<UGameSerializerLevelStreamingLambda>(LevelStreaming);
+			CachedLevelStreamingLambdas.Add(LevelStreamingLambda);
+			LevelStreaming->OnLevelLoaded.AddDynamic(LevelStreamingLambda, &UGameSerializerLevelStreamingLambda::WhenLevelLoaded);
+			LevelStreamingLambda->OnLevelLoaded.BindWeakLambda(this, [this](ULevel* LoadedLevel)
+			{
+				const FString LevelName = LoadedLevel->GetOuter()->GetName();
+				if (bInvokeLoadGame)
+				{
+					TOptional<TSharedRef<FJsonObject>> JsonObject = TryLoadJsonObject(LoadedLevel->GetWorld(), TEXT("Levels"), *LevelName);
+					if (JsonObject.IsSet())
+					{
+						FGuardValue_Bitfield(bShouldInitSpawnActor, false);
+
+						GameSerializerStatLog(STAT_GameSerializerManager_LoadStreamLevelStart);
+
+						UE_LOG(GameSerializer_Log, Display, TEXT("加载流式关卡[%s]"), *LoadedLevel->GetOuter()->GetName());
+
+						TArray<AActor*> PrepareLoadActors;
+						for (AActor* Actor : LoadedLevel->Actors)
+						{
+							if (Actor && Actor->Implements<UActorGameSerializerInterface>())
+							{
+								if (IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
+								{
+									PrepareLoadActors.Add(Actor);
+								}
+							}
+						}
+
+						const TSharedRef<FLevelDeserializer> LevelDeserializer = MakeShared<FLevelDeserializer>(LoadedLevel, JsonObject.GetValue());
+						const FIntVector OldWorldOrigin = LevelDeserializer->GetStruct<FIntVector>(JsonFieldName::WorldOrigin);
+						TGuardValue<FIntVector> WorldOffsetGuard(GameSerializerContext::WorldOffset, OldWorldOrigin - LoadedLevel->GetWorld()->OriginLocation);
+						LevelDeserializer->LoadExternalObject();
+						LevelDeserializer->InstanceDynamicObject();
+						LevelDeserializer->LoadDynamicObjectJsonData();
+
+						const TArray<UObject*> LoadedActors = LevelDeserializer->GetObjects(JsonFieldName::LevelActors);
+						for (AActor* Actor : PrepareLoadActors)
+						{
+							if (IsValid(Actor))
+							{
+								if (LoadedActors.Contains(Actor) == false)
+								{
+									Actor->Destroy();
+								}
+							}
+						}
+						StreamLoadedLevelDataMap.Add(LoadedLevel, LevelDeserializer);
+					}
+				}
+			});
+		}
+	}
 	
 	for (ULevel* Level : World->GetLevels())
 	{
@@ -471,19 +575,31 @@ void UGameSerializerManager::SerializeLevel(ULevel* Level)
 	const FString LevelName = GetLevelPath(Level);
 	UE_LOG(GameSerializer_Log, Display, TEXT("保存关卡[%s]"), *LevelName);
 
-	TArray<UObject*> SerializeList;
-	SerializeList.Reset(Level->Actors.Num());
+	struct FActorSortUnit
+	{
+		AActor* Actor;
+		int32 Priority;
+	};
+	TArray<FActorSortUnit> ToSaveActors;
 	for (AActor* Actor : Level->Actors)
 	{
-		if (IsValid(Actor) && Actor->HasAnyFlags(RF_Transient) == false && Actor->Implements<UActorGameSerializerInterface>())
+		if (IsValid(Actor) && Actor->Implements<UActorGameSerializerInterface>() && IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
 		{
-			if (IActorGameSerializerInterface::GetGameSerializedOwner(Actor) == nullptr && IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
+			if (ensure(IActorGameSerializerInterface::GetGameSerializedOwner(Actor) == nullptr))
 			{
-				SerializeList.Add(Actor);
+				ToSaveActors.Add({ Actor, IActorGameSerializerInterface::GetGameSerializePriority(Actor) });
 			}
 		}
 	}
+	ToSaveActors.Sort([](const FActorSortUnit& LHS, const FActorSortUnit& RHS){ return LHS.Priority > RHS.Priority; });
 
+	TArray<UObject*> SerializeList;
+	SerializeList.SetNum(ToSaveActors.Num());
+	for (int32 Idx = 0; Idx < ToSaveActors.Num(); ++Idx)
+	{
+		SerializeList[Idx] = ToSaveActors[Idx].Actor;
+	}
+	
 	struct FLevelSerializer : public GameSerializerCore::FStructToJson
 	{
 		FLevelSerializer()
@@ -495,13 +611,6 @@ void UGameSerializerManager::SerializeLevel(ULevel* Level)
 	FLevelSerializer LevelSerializer;
 	LevelSerializer.AddStruct(JsonFieldName::WorldOrigin, Level->GetWorld()->OriginLocation);
 	LevelSerializer.AddObjects(JsonFieldName::LevelActors, SerializeList);
-
-	UWorld* World = Level->GetWorld();
-	const bool IsMainLevel = World->PersistentLevel == Level;
-	if (IsMainLevel)
-	{
-		LevelSerializer.AddObject(JsonFieldName::GameState, World->GetGameState());
-	}
 
 	const TSharedRef<FJsonObject> JsonObject = LevelSerializer.GetResultJson();
 	SaveJsonObject(Level->GetWorld(), JsonObject, TEXT("Levels"), *LevelName);

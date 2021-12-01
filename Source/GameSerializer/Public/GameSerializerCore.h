@@ -82,12 +82,35 @@ namespace GameSerializerCore
 
 	struct FJsonToStruct
 	{
+		struct FSpawnedActorData
+		{
+			TWeakObjectPtr<AActor> SpawnedActor;
+			// 在关卡进行流式加载完毕前动态Spawn的Actor会在ULevel::InitializeNetworkActors被判断为稳定命名对象（bNetStartup）
+			// 通过设置bNetLoadOnClient跳过bNetStartup设置
+			uint8 bNetLoadOnClient : 1;
+		};
+
+		struct FInstancedObjectData
+		{
+			TWeakObjectPtr<UObject> Object;
+			TSharedRef<FJsonObject> JsonObject;
+			TArray<struct FGameSerializerNetNotifyData> AllNetNotifyData;
+		};
+	public:
 		EPropertyFlags CheckFlags = DefaultCheckFlags;
 		EPropertyFlags SkipFlags = DefaultSkipFlags;
 		
 		FJsonToStruct(UObject* Outer, const TSharedRef<FJsonObject>& RootJsonObject);
 
-		void LoadAllDataImmediately() { LoadExternalObject(); InstanceDynamicObject(); LoadDynamicObjectJsonData(); DynamicActorFinishSpawning(); RestoreDynamicActorSpawnedData(); LoadDynamicObjectExtendData(); }
+		void LoadAllDataImmediately()
+		{
+			LoadExternalObject();
+			InstanceDynamicObject();
+			LoadDynamicObjectJsonData();
+			DynamicActorFinishSpawning();
+			RestoreDynamicActorSpawnedData();
+			LoadDynamicObjectExtendData();
+		}
 		
 		void LoadExternalObject();
 		void InstanceDynamicObject();
@@ -97,7 +120,11 @@ namespace GameSerializerCore
 		void LoadDynamicObjectExtendData();
 
 		void RetargetDynamicObjectName(const FString& FieldName, const FName& NewName);
-		
+
+		const TArray<FSpawnedActorData>& GetSpawnedActors() const { return SpawnedActors; }
+		const TArray<FInstancedObjectData>& GetAllInstancedObjectData() const { return AllInstancedObjectData; }
+		void ExecutePostLoad(UObject* LoadedObject, const FInstancedObjectData& InstancedObjectData) const;
+
 		TArray<UObject*> GetObjects(const FString& FieldName) const;
 		UObject* GetObject(const FString& FieldName) const;
 
@@ -110,33 +137,19 @@ namespace GameSerializerCore
 	private:
 		UObject* JsonObjectToInstanceObject(const TSharedRef<FJsonObject>& JsonObject, FObjectIdx ObjectIdx);
 		UObject* GetObjectByIdx(FObjectIdx ObjectIdx) const;
-		bool JsonObjectIdxToObject(const TSharedPtr<FJsonValue>& JsonValue, FProperty* Property, void* OutValue);
+		bool JsonObjectIdxToObject(const TSharedPtr<FJsonValue>& JsonValue, FProperty* Property, void* OutValue) const;
 		
 		UObject* Outer;
 		TSharedRef<FJsonObject> RootJsonObject;
 		TArray<UObject*> ExternalObjectsArray = { nullptr };
 		TArray<UObject*> ObjectsArray = { nullptr };
 
-		struct FSpawnedActorData
-		{
-			TWeakObjectPtr<AActor> SpawnedActor;
-			// 在关卡进行流式加载完毕前动态Spawn的Actor会在ULevel::InitializeNetworkActors被判断为稳定命名对象（bNetStartup）
-			// 通过设置bNetLoadOnClient跳过bNetStartup设置
-			uint8 bNetLoadOnClient : 1;
-		};
 		TArray<FSpawnedActorData> SpawnedActors;
+		TArray<FInstancedObjectData> AllInstancedObjectData;
 
-		struct FInstancedObjectData
-		{
-			TWeakObjectPtr<UObject> Object;
-			TSharedRef<FJsonObject> JsonObject;
-			TArray<struct FGameSerializerNetNotifyData> NetNotifyDatas;
-		};
-		TArray<FInstancedObjectData> InstancedObjectDatas;
-
-		void GetStruct(const TSharedRef<FJsonObject>& JsonObject, const FString& FieldName, UScriptStruct* Struct, void* Value);
+		void GetStruct(const TSharedRef<FJsonObject>& JsonObject, const FString& FieldName, UScriptStruct* Struct, void* Value) const;
 		template<typename T>
-		T GetStruct(const TSharedRef<FJsonObject>& JsonObject, const FString& FieldName)
+		T GetStruct(const TSharedRef<FJsonObject>& JsonObject, const FString& FieldName) const
 		{
 			static const T DefaultValue{};
 			T Value{ DefaultValue };
