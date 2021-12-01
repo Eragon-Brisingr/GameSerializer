@@ -70,6 +70,24 @@ void UGameSerializerLevelStreamingLambda::WhenLevelLoaded()
 	OnLevelLoaded.Execute(CastChecked<ULevelStreaming>(GetOuter())->GetLoadedLevel());
 }
 
+bool UGameSerializerWorldSubsystem::DoesSupportWorldType(EWorldType::Type WorldType) const
+{
+	return WorldType == EWorldType::Game || WorldType == EWorldType::PIE;
+}
+
+void UGameSerializerWorldSubsystem::UpdateStreamingState()
+{
+	Super::UpdateStreamingState();
+
+	if (const UGameInstance* GameInstance = GetWorld()->GetGameInstance())
+	{
+		if (UGameSerializerManager* GameSerializerManager = GameInstance->GetSubsystem<UGameSerializerManager>())
+		{
+			GameSerializerManager->UpdateLevelStreamingData();
+		}
+	}
+}
+
 UGameSerializerManager::UGameSerializerManager()
 	: bIsEnable(false)
 	, bInvokeLoadGame(true)
@@ -370,7 +388,6 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 		});
 	}
 
-	UWorld* World = Level->GetWorld();
 	if (bInvokeLoadGame)
 	{
 		if (TSharedRef<FLevelDeserializer>* StreamLoadedLevelDeserializerPtr = StreamLoadedLevelDataMap.Find(Level))
@@ -378,7 +395,7 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 			GameSerializerStatLog(STAT_GameSerializerManager_LoadStreamLevelEnd);
 		
 			UE_LOG(GameSerializer_Log, Display, TEXT("完成流式关卡[%s]加载"), *LevelName);
-		
+
 			FLevelDeserializer& LevelDeserializer = StreamLoadedLevelDeserializerPtr->Get();
 			LevelDeserializer.RestoreDynamicActorSpawnedData();
 
@@ -402,12 +419,9 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 			TArray<AActor*> PrepareLoadActors;
 			for (AActor* Actor : Level->Actors)
 			{
-				if (IsValid(Actor))
+				if (IsValid(Actor) && Actor->Implements<UActorGameSerializerInterface>() && IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
 				{
-					if (Actor->Implements<UActorGameSerializerInterface>() && IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
-					{
-						PrepareLoadActors.Add(Actor);
-					}
+					PrepareLoadActors.Add(Actor);
 				}
 			}
 
@@ -426,12 +440,9 @@ void UGameSerializerManager::LoadOrInitLevel(ULevel* Level)
 
 			for (AActor* Actor : PrepareLoadActors)
 			{
-				if (IsValid(Actor))
+				if (IsValid(Actor) && LoadedActors.Contains(Actor) == false)
 				{
-					if (LoadedActors.Contains(Actor) == false)
-					{
-						Actor->Destroy();
-					}
+					Actor->Destroy();
 				}
 			}
 
@@ -485,67 +496,11 @@ void UGameSerializerManager::LoadOrInitWorld(UWorld* World)
 
 	ensure(LoadedLevels.Num() == 0);
 	LoadedLevels.Reset();
-
-	const TArray<ULevelStreaming*>& StreamingLevels = World->GetStreamingLevels();
-	CachedLevelStreamingLambdas.Reset(StreamingLevels.Num());
-	for (ULevelStreaming* LevelStreaming : StreamingLevels)
-	{
-		if (ensure(LevelStreaming))
-		{
-			UGameSerializerLevelStreamingLambda* LevelStreamingLambda = NewObject<UGameSerializerLevelStreamingLambda>(LevelStreaming);
-			CachedLevelStreamingLambdas.Add(LevelStreamingLambda);
-			LevelStreaming->OnLevelLoaded.AddDynamic(LevelStreamingLambda, &UGameSerializerLevelStreamingLambda::WhenLevelLoaded);
-			LevelStreamingLambda->OnLevelLoaded.BindWeakLambda(this, [this](ULevel* LoadedLevel)
-			{
-				const FString LevelName = LoadedLevel->GetOuter()->GetName();
-				if (bInvokeLoadGame)
-				{
-					TOptional<TSharedRef<FJsonObject>> JsonObject = TryLoadJsonObject(LoadedLevel->GetWorld(), TEXT("Levels"), *LevelName);
-					if (JsonObject.IsSet())
-					{
-						FGuardValue_Bitfield(bShouldInitSpawnActor, false);
-
-						GameSerializerStatLog(STAT_GameSerializerManager_LoadStreamLevelStart);
-
-						UE_LOG(GameSerializer_Log, Display, TEXT("加载流式关卡[%s]"), *LoadedLevel->GetOuter()->GetName());
-
-						TArray<AActor*> PrepareLoadActors;
-						for (AActor* Actor : LoadedLevel->Actors)
-						{
-							if (Actor && Actor->Implements<UActorGameSerializerInterface>())
-							{
-								if (IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
-								{
-									PrepareLoadActors.Add(Actor);
-								}
-							}
-						}
-
-						const TSharedRef<FLevelDeserializer> LevelDeserializer = MakeShared<FLevelDeserializer>(LoadedLevel, JsonObject.GetValue());
-						const FIntVector OldWorldOrigin = LevelDeserializer->GetStruct<FIntVector>(JsonFieldName::WorldOrigin);
-						TGuardValue<FIntVector> WorldOffsetGuard(GameSerializerContext::WorldOffset, OldWorldOrigin - LoadedLevel->GetWorld()->OriginLocation);
-						LevelDeserializer->LoadExternalObject();
-						LevelDeserializer->InstanceDynamicObject();
-						LevelDeserializer->LoadDynamicObjectJsonData();
-
-						const TArray<UObject*> LoadedActors = LevelDeserializer->GetObjects(JsonFieldName::LevelActors);
-						for (AActor* Actor : PrepareLoadActors)
-						{
-							if (IsValid(Actor))
-							{
-								if (LoadedActors.Contains(Actor) == false)
-								{
-									Actor->Destroy();
-								}
-							}
-						}
-						StreamLoadedLevelDataMap.Add(LoadedLevel, LevelDeserializer);
-					}
-				}
-			});
-		}
-	}
 	
+	StreamLoadedLevelDataMap.Reset();
+	CachedLevelStreamingLambdas.Reset();
+	UpdateLevelStreamingData();
+
 	for (ULevel* Level : World->GetLevels())
 	{
 		LoadOrInitLevel(Level);
@@ -658,6 +613,78 @@ void UGameSerializerManager::OpenWorld(TSoftObjectPtr<UWorld> ToWorld)
 			SerializeWorldWhenRemoved(World);
 		}
 		GEngine->Exec(GetWorld(), *FString::Printf(TEXT("open %s"), *ToWorldName));
+	}
+}
+
+void UGameSerializerManager::UpdateLevelStreamingData()
+{
+	if (bInvokeLoadGame == false)
+	{
+		return;
+	}
+
+	UWorld* World = LoadedWorld.Get();
+	if (World == nullptr)
+	{
+		return;
+	}
+	
+	const TArray<ULevelStreaming*>& StreamingLevels = World->GetStreamingLevels();
+	for (auto It = CachedLevelStreamingLambdas.CreateIterator(); It; ++It)
+	{
+		const UGameSerializerLevelStreamingLambda* StreamingLambda = *It;
+		if (StreamingLevels.Contains(StreamingLambda->GetOuter()) == false)
+		{
+			It.RemoveCurrent();
+		}
+	}
+	for (ULevelStreaming* LevelStreaming : StreamingLevels)
+	{
+		if (CachedLevelStreamingLambdas.ContainsByPredicate([&](const UGameSerializerLevelStreamingLambda* E) { return E->GetOuter() == LevelStreaming; }) == false)
+		{
+			UGameSerializerLevelStreamingLambda* LevelStreamingLambda = NewObject<UGameSerializerLevelStreamingLambda>(LevelStreaming);
+			CachedLevelStreamingLambdas.Add(LevelStreamingLambda);
+			LevelStreaming->OnLevelLoaded.AddDynamic(LevelStreamingLambda, &UGameSerializerLevelStreamingLambda::WhenLevelLoaded);
+			LevelStreamingLambda->OnLevelLoaded.BindWeakLambda(this, [this](ULevel* LoadedLevel)
+			{
+				const FString LevelName = GetLevelPath(LoadedLevel);
+				TOptional<TSharedRef<FJsonObject>> JsonObject = TryLoadJsonObject(LoadedLevel->GetWorld(), TEXT("Levels"), *LevelName);
+				if (JsonObject.IsSet())
+				{
+					FGuardValue_Bitfield(bShouldInitSpawnActor, false);
+
+					GameSerializerStatLog(STAT_GameSerializerManager_LoadStreamLevelStart);
+
+					UE_LOG(GameSerializer_Log, Display, TEXT("加载流式关卡[%s]"), *LevelName);
+
+					TArray<AActor*> PrepareLoadActors;
+					for (AActor* Actor : LoadedLevel->Actors)
+					{
+						if (IsValid(Actor) && Actor->Implements<UActorGameSerializerInterface>() && IActorGameSerializerInterface::CanGameSerializedInLevel(Actor))
+						{
+							PrepareLoadActors.Add(Actor);
+						}
+					}
+
+					const TSharedRef<FLevelDeserializer> LevelDeserializer = MakeShared<FLevelDeserializer>(LoadedLevel, JsonObject.GetValue());
+					const FIntVector OldWorldOrigin = LevelDeserializer->GetStruct<FIntVector>(JsonFieldName::WorldOrigin);
+					TGuardValue<FIntVector> WorldOffsetGuard(GameSerializerContext::WorldOffset, OldWorldOrigin - LoadedLevel->GetWorld()->OriginLocation);
+					LevelDeserializer->LoadExternalObject();
+					LevelDeserializer->InstanceDynamicObject();
+					LevelDeserializer->LoadDynamicObjectJsonData();
+
+					const TArray<UObject*> LoadedActors = LevelDeserializer->GetObjects(JsonFieldName::LevelActors);
+					for (AActor* Actor : PrepareLoadActors)
+					{
+						if (IsValid(Actor) && LoadedActors.Contains(Actor) == false)
+						{
+							Actor->Destroy();
+						}
+					}
+					StreamLoadedLevelDataMap.Add(LoadedLevel, LevelDeserializer);
+				}
+			});
+		}
 	}
 }
 

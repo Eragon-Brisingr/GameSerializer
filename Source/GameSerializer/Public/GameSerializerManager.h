@@ -35,6 +35,15 @@ public:
 	void WhenLevelLoaded();
 };
 
+UCLASS()
+class UGameSerializerWorldSubsystem : public UWorldSubsystem
+{
+	GENERATED_BODY()
+public:
+	bool DoesSupportWorldType(EWorldType::Type WorldType) const override;
+	void UpdateStreamingState() override;
+};
+
 /**
  * 
  */
@@ -42,6 +51,8 @@ UCLASS()
 class GAMESERIALIZER_API UGameSerializerManager : public UGameInstanceSubsystem
 {
 	GENERATED_BODY()
+
+	friend class UGameSerializerWorldSubsystem;
 public:
 	UGameSerializerManager();
 	
@@ -100,6 +111,7 @@ private:
 	TWeakObjectPtr<UWorld> LoadedWorld;
 	TArray<TWeakObjectPtr<ULevel>> LoadedLevels;
 
+	void UpdateLevelStreamingData();
 	TMap<TWeakObjectPtr<ULevel>, TSharedRef<struct FLevelDeserializer>> StreamLoadedLevelDataMap;
 	UPROPERTY(Transient)
 	TArray<UGameSerializerLevelStreamingLambda*> CachedLevelStreamingLambdas;
