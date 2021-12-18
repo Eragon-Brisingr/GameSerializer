@@ -703,9 +703,8 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 
 	APlayerState* PlayerState = NewPlayer->GetPlayerState<APlayerState>();
 	check(PlayerState);
-	
-	FGuardValue_Bitfield(PlayerState->bUseCustomPlayerNames, true);
-	FString PlayerName = PlayerState->GetPlayerName();
+
+	FString PlayerName = PlayerState->GetPlayerNameCustom();
 	ULevel* SpawnLevel = World->PersistentLevel;
 	if (APawn* ExistedPawn = FindObject<APawn>(SpawnLevel, *PlayerName))
 	{
