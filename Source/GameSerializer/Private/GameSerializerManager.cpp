@@ -288,13 +288,6 @@ void UGameSerializerManager::InitActorAndComponents(AActor* Actor)
 {
 	check(Actor->Implements<UActorGameSerializerInterface>());
 	IActorGameSerializerInterface::WhenGameInit(Actor);
-	for (UActorComponent* Component : Actor->GetComponents())
-	{
-		if (Component->Implements<UComponentGameSerializerInterface>())
-		{
-			IComponentGameSerializerInterface::WhenGameInit(Component);
-		}
-	}
 }
 
 struct FLevelDeserializer : public GameSerializerCore::FJsonToStruct

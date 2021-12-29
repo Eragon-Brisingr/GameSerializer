@@ -68,6 +68,13 @@ void IActorGameSerializerInterface::WhenGameInit(AActor* Actor)
 {
 	FEditorScriptExecutionGuard EditorScriptExecutionGuard;
 	Execute_WhenGameInit(Actor);
+	for (UActorComponent* Component : Actor->GetComponents())
+	{
+		if (Component->Implements<UComponentGameSerializerInterface>())
+		{
+			IComponentGameSerializerInterface::WhenGameInit(Component);
+		}
+	}
 }
 
 bool IActorGameSerializerInterface::CanGameSerializedInLevel_Implementation() const
