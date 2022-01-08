@@ -779,6 +779,21 @@ APawn* UGameSerializerManager::LoadOrSpawnDefaultPawn(AGameModeBase* GameMode, A
 		TGuardValue<FIntVector> WorldOffsetGuard(GameSerializerContext::WorldOffset, OldWorldOrigin - Pawn->GetWorld()->OriginLocation);
 		PlayerDeserializer.LoadAllDataImmediately();
 	}
+	else
+	{
+		if (PlayerController->Implements<UActorGameSerializerInterface>())
+		{
+			IActorGameSerializerInterface::WhenGameInit(PlayerController);
+		}
+		if (PlayerState->Implements<UActorGameSerializerInterface>())
+		{
+			IActorGameSerializerInterface::WhenGameInit(PlayerState);
+		}
+		if (Pawn->Implements<UActorGameSerializerInterface>())
+		{
+			IActorGameSerializerInterface::WhenGameInit(Pawn);
+		}
+	}
 	
 	return Pawn;
 }
