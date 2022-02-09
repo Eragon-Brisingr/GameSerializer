@@ -31,15 +31,6 @@ public:
 	TSharedPtr<FGameSerializerExtendData> ExtendData;
 
 	bool IsValid() const { return Struct != nullptr; }
-	
-	template<typename T>
-	static FGameSerializerExtendDataContainer Make(const T& ExtendData)
-	{
-		FGameSerializerExtendDataContainer Container;
-		Container.Struct = T::StaticStruct();
-		Container.ExtendData = MakeShared<T>(ExtendData);
-		return Container;
-	}
 
 	template<typename T>
 	const T& Get() const
@@ -50,6 +41,16 @@ public:
 		}
 		static const T DefaultValue;
 		return DefaultValue;
+	}
+};
+
+template<typename T>
+struct TGameSerializerExtendDataContainer : FGameSerializerExtendDataContainer
+{
+	T* operator->()
+	{
+		check(Struct && Struct->IsChildOf(T::StaticStruct()));
+		return (T*)ExtendData.Get();
 	}
 };
 

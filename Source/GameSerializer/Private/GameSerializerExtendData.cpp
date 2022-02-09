@@ -96,9 +96,9 @@ void FActorGameSerializerExtendData::LoadData(AActor* Actor) const
 FGameSerializerExtendDataContainer FActorGameSerializerExtendDataFactory::WhenGamePreSave(UObject* Instance)
 {
 	AActor* Actor = CastChecked<AActor>(Instance);
-	FActorGameSerializerExtendData ExtendData;
-	ExtendData.SaveData(Actor);
-	return FGameSerializerExtendDataContainer::Make(ExtendData);
+	auto ExtendData = IGameSerializerInterface::MakeSerializerExtendData<FActorGameSerializerExtendData>();
+	ExtendData->SaveData(Actor);
+	return ExtendData;
 }
 
 void FActorGameSerializerExtendDataFactory::WhenGamePostLoad(UObject* Instance, const FGameSerializerExtendDataContainer& ExtendData, const FGameSerializerCallRepNotifyFunc& CallRepNotifyFunc)

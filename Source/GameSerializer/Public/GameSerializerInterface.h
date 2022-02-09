@@ -31,6 +31,15 @@ public:
 	TArray<FName> GetCallRepNotifyIgnorePropertyNames();
 	virtual TArray<FName> GetCallRepNotifyIgnorePropertyNames_Implementation() { return TArray<FName>(); }
 	static TArray<FName> GetCallRepNotifyIgnorePropertyNames(UObject* Obj) { return Execute_GetCallRepNotifyIgnorePropertyNames(Obj); }
+	
+	template<typename T>
+	static TGameSerializerExtendDataContainer<T> MakeSerializerExtendData()
+	{
+		TGameSerializerExtendDataContainer<T> Container;
+		Container.Struct = T::StaticStruct();
+		Container.ExtendData = MakeShared<T>();
+		return Container;
+	}
 protected:
 	void DefaultWhenGamePostLoad(const FGameSerializerExtendDataContainer& ExtendData, const FGameSerializerCallRepNotifyFunc& CallRepNotifyFunc);
 };
