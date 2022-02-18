@@ -5,6 +5,20 @@
 
 #include "GameSerializer_Log.h"
 
+UObject* IGameSerializerInterface::GetGameSerializedOuter() const
+{
+	return CastChecked<UObject>(this)->GetOuter();
+}
+
+UObject* IGameSerializerInterface::GetGameSerializedOuter(const UObject* Obj)
+{
+	if (const IGameSerializerInterface* GameSerializerInterface = Cast<IGameSerializerInterface>(Obj))
+	{
+		return GameSerializerInterface->GetGameSerializedOuter();
+	}
+	return Obj->GetOuter();
+}
+
 FGameSerializerExtendDataContainer IGameSerializerInterface::WhenGamePreSave_Implementation()
 {
 	return FGameSerializerExtendDataContainer();

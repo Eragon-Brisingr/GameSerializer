@@ -47,10 +47,15 @@ public:
 template<typename T>
 struct TGameSerializerExtendDataContainer : FGameSerializerExtendDataContainer
 {
+	T& operator*()
+	{
+		check(Struct && Struct->IsChildOf(T::StaticStruct()));
+		return static_cast<T&>(*ExtendData.Get());
+	}
 	T* operator->()
 	{
 		check(Struct && Struct->IsChildOf(T::StaticStruct()));
-		return (T*)ExtendData.Get();
+		return static_cast<T*>(ExtendData.Get());
 	}
 };
 

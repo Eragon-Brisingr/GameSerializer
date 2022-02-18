@@ -1011,7 +1011,7 @@ namespace GameSerializerCore
 
 	TSharedPtr<FJsonValue> FStructToJson::ConvertObjectToJson(FProperty* Property, const void* Value, const void* Default, bool& bSameValue)
 	{
-		if (FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property))
+		if (const FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property))
 		{
 			UObject* SubObject = ObjectProperty->GetPropertyValue(Value);
 
@@ -1037,7 +1037,7 @@ namespace GameSerializerCore
 				}
 
 				// Actor用Owner进行归属的判断
-				if (AActor* SubActor = Cast<AActor>(SubObject))
+				if (const AActor* SubActor = Cast<AActor>(SubObject))
 				{
 					for (FObjectIdx Idx = OuterChain.Num() - 1; Idx >= 0; --Idx)
 					{
@@ -1062,7 +1062,8 @@ namespace GameSerializerCore
 					for (FObjectIdx Idx = OuterChain.Num() - 1; Idx >= 0; --Idx)
 					{
 						const FOuterData& TestOuterData = OuterChain[Idx];
-						if (SubObject->GetOuter() == TestOuterData.Outer)
+						const UObject* GameSerializedOuter = IGameSerializerInterface::GetGameSerializedOuter(SubObject);
+						if (GameSerializedOuter == TestOuterData.Outer)
 						{
 							TSharedPtr<FJsonObject> SubObjectsJsonObject;
 							if (TestOuterData.OuterJsonObject->HasField(SubObjectsFieldName))

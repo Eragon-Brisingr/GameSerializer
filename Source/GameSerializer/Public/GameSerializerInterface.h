@@ -17,6 +17,9 @@ class GAMESERIALIZER_API IGameSerializerInterface
 {
 	GENERATED_BODY()
 public:
+	virtual UObject* GetGameSerializedOuter() const;
+	static UObject* GetGameSerializedOuter(const UObject* Obj);
+
 	UFUNCTION(BlueprintNativeEvent, Category = "游戏序列化")
 	FGameSerializerExtendDataContainer WhenGamePreSave();
 	virtual FGameSerializerExtendDataContainer WhenGamePreSave_Implementation();
